@@ -15,6 +15,9 @@ import com.airsonic.sender.api.DeviceListener
 import com.airsonic.sender.api.DeviceType
 import com.airsonic.sender.capture.SystemAudioCapture
 import com.airsonic.sender.discovery.AirplayDiscovery
+import com.airsonic.sender.discovery.DlnaDiscovery
+import com.airsonic.sender.dlna.DlnaController
+import com.airsonic.sender.dlna.buildDidl
 import com.airsonic.sender.pairing.PairingHandshake
 import com.airsonic.sender.streaming.AirplayStreamSession
 import com.airsonic.sender.streaming.BPlist
@@ -50,6 +53,8 @@ object CastEngine {
     private var savedVolume: Int = -1
     private var httpServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
+    private var dlnaDiscovery: DlnaDiscovery? = null
+    @Volatile private var dlnaCtl: DlnaController? = null
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
     val videoDur = mutableStateOf(0.0)
@@ -62,7 +67,7 @@ object CastEngine {
     private val PIN_CANCEL = " CANCEL"
     @Volatile private var pinAborted = false
 
-    fun supportsVideo(d: AirDevice): Boolean = d.capabilities.supportsVideo
+    fun supportsVideo(d: AirDevice): Boolean = d.type == DeviceType.DLNA || d.capabilities.supportsVideo
 
     /** 凡 `_airplay._tcp` 发现的设备均可试投（实测 HomePod/Sonos/小米 均走标准 transient 配对）。 */
     fun isCastable(d: AirDevice): Boolean = true
@@ -97,11 +102,24 @@ object CastEngine {
                 statusLine.value = "${L10n.s.discoverFail}$reason"
             }
         })
+        val dl = DlnaDiscovery(context.applicationContext)
+        dlnaDiscovery = dl
+        dl.start(object : DeviceListener {
+            override fun onDeviceFound(device: AirDevice) {
+                val idx = devices.indexOfFirst { it.id == device.id }
+                if (idx >= 0) devices[idx] = device else devices.add(device)
+                if (selected.value == null && isCastable(device)) selected.value = device
+            }
+            override fun onDeviceLost(device: AirDevice) { devices.removeAll { it.id == device.id } }
+            override fun onDiscoveryFailed(reason: String) { /* DLNA 发现失败不打断 AirPlay */ }
+        })
     }
 
     fun stopDiscovery() {
         runCatching { discovery?.stop() }
         discovery = null
+        runCatching { dlnaDiscovery?.stop() }
+        dlnaDiscovery = null
         discovering.value = false
     }
 
@@ -150,6 +168,7 @@ object CastEngine {
     /** 本地媒体（音频文件 / 视频文件音轨）投送。 */
     fun startFileCast(context: Context, uri: Uri) {
         val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (device.type == DeviceType.DLNA) { startDlnaCast(context, uri, device, isVideoFile = false); return }
         if (!isCastable(device)) { statusLine.value = "${device.name} ${L10n.s.notSupportedSuffix}"; phase.value = CastPhase.ERROR; return }
         val app = context.applicationContext
         phase.value = CastPhase.CONNECTING
@@ -177,6 +196,7 @@ object CastEngine {
     /** 投视频：TV → /play 全屏播放；音箱 → 回退只投音轨。 */
     fun startVideoCast(context: Context, uri: Uri) {
         val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (device.type == DeviceType.DLNA) { startDlnaCast(context, uri, device, isVideoFile = true); return }
         if (!supportsVideo(device)) { startFileCast(context, uri); return }
         val app = context.applicationContext
         phase.value = CastPhase.CONNECTING
@@ -209,17 +229,64 @@ object CastEngine {
         }
     }
 
+    /** DLNA 投送：起本地 HTTP 服务 → SetAVTransportURI + Play → 轮询进度。视频/音频同路径。 */
+    private fun startDlnaCast(context: Context, uri: Uri, device: AirDevice, isVideoFile: Boolean) {
+        val app = context.applicationContext
+        val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} ${device.name} …"
+        casting = true; isVideo.value = isVideoFile
+        worker = thread(name = "airsonic-dlna", isDaemon = true) {
+            try {
+                val src = ContentResolverRangeSource(app, uri)
+                if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
+                val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
+                val port = server.start(); httpServer = server
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return@thread }
+                val url = "http://$localIp:$port${server.path}"
+                val didl = buildDidl(device.name, url, src.mimeType, isVideoFile)
+                val ctl = DlnaController(controlUrl); dlnaCtl = ctl
+                if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
+                if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
+                onCastingStarted(device.name)
+                while (casting) {
+                    Thread.sleep(1000)
+                    val info = ctl.getPositionInfo() ?: continue
+                    videoPos.value = info.first; videoDur.value = info.second
+                }
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}")
+            } finally {
+                dlnaCleanup()
+            }
+        }
+    }
+
+    private fun dlnaCleanup() {
+        casting = false
+        runCatching { dlnaCtl?.stop() }; dlnaCtl = null
+        runCatching { httpServer?.stop() }; httpServer = null
+        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
+        startedAt.value = 0L; level.value = 0f; worker = null
+        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+    }
+
     fun submitPin(pin: String) { pinQueue.offer(pin) }
     fun cancelPin() { pinQueue.offer(PIN_CANCEL) }
 
-    fun videoPause() { videoCtl?.rate(0) }
-    fun videoResume() { videoCtl?.rate(1) }
-    fun videoSeek(sec: Double) { videoCtl?.scrub(sec) }
+    // DLNA 控制是阻塞 SOAP（且 seek 后还要 sleep），调用方是 Compose 主线程 → 必须切后台线程避免 ANR。
+    fun videoPause() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.pause() }; return }; videoCtl?.rate(0) }
+    fun videoResume() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.play() }; return }; videoCtl?.rate(1) }
+    fun videoSeek(sec: Double) {
+        dlnaCtl?.let { c -> thread(isDaemon = true) { c.seek(sec); Thread.sleep(1000); c.play() }; return }
+        videoCtl?.scrub(sec)
+    }
 
     fun stop() {
         casting = false
         runCatching { capture?.stop() }
         runCatching { videoCtl?.stop() }
+        runCatching { dlnaCtl?.stop() }
     }
 
     // ---- 内部 ----
