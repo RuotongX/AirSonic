@@ -40,3 +40,17 @@ fun hmsToSec(hms: String): Double {
         }
     }.getOrDefault(0.0)
 }
+
+/** 最小 DIDL-Lite 元数据（title/url 已转义）。 */
+fun buildDidl(title: String, url: String, mime: String, isVideo: Boolean): String {
+    val cls = if (isVideo) "object.item.videoItem" else "object.item.audioItem.musicTrack"
+    val proto = "http-get:*:$mime:$DLNA_CONTENT_FEATURES"
+    return """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" """ +
+        """xmlns:dc="http://purl.org/dc/elements/1.1/" """ +
+        """xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">""" +
+        """<item id="0" parentID="-1" restricted="1">""" +
+        """<dc:title>${escapeXml(title)}</dc:title>""" +
+        """<upnp:class>$cls</upnp:class>""" +
+        """<res protocolInfo="${escapeXml(proto)}">${escapeXml(url)}</res>""" +
+        """</item></DIDL-Lite>"""
+}
