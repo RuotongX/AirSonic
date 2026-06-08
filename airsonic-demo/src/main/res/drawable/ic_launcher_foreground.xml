@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 原创声波柱（构成抽象「A」），青→品红渐变，圆头 -->
+    <path
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:pathData="M34,72 L34,50 M44,72 L44,42 M54,72 L54,33 M64,72 L64,42 M74,72 L74,50">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="30" android:startY="30"
+                android:endX="80" android:endY="80"
+                android:startColor="#4DEDED"
+                android:endColor="#CB66FF" />
+        </aapt:attr>
+    </path>
+    <!-- 广播弧（信号外扩） -->
+    <path
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M40,80 A 14,14 0 0 1 68,80 M33,84 A 21,21 0 0 1 75,84">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="33" android:startY="80"
+                android:endX="75" android:endY="84"
+                android:startColor="#4DEDED"
+                android:endColor="#CB66FF" />
+        </aapt:attr>
+    </path>
+</vector>

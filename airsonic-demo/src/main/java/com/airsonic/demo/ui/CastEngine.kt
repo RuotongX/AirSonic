@@ -1,0 +1,387 @@
+package com.airsonic.demo.ui
+
+import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import com.airsonic.demo.capture.CaptureProjectionService
+import com.airsonic.sender.api.AirDevice
+import com.airsonic.sender.api.DeviceListener
+import com.airsonic.sender.api.DeviceType
+import com.airsonic.sender.capture.SystemAudioCapture
+import com.airsonic.sender.discovery.AirplayDiscovery
+import com.airsonic.sender.pairing.PairingHandshake
+import com.airsonic.sender.streaming.AirplayStreamSession
+import com.airsonic.sender.streaming.BPlist
+import kotlin.concurrent.thread
+
+/** 投送阶段。 */
+enum class CastPhase { IDLE, CONNECTING, CASTING, ERROR }
+
+/**
+ * 投送大脑：设备发现 + 选中设备 + 投送状态/动作。对 Compose 暴露快照状态。
+ * 复用 airsonic-sender 后端（发现/配对/SETUP/捕获/推流）。
+ */
+object CastEngine {
+    // ---- 设备发现 ----
+    val devices: SnapshotStateList<AirDevice> = mutableStateListOf()
+    var selected = mutableStateOf<AirDevice?>(null)
+        private set
+    var discovering = mutableStateOf(false)
+        private set
+
+    // ---- 投送状态 ----
+    val phase = mutableStateOf(CastPhase.IDLE)
+    val statusLine = mutableStateOf("")
+    /** 实时音频幅度 0..1，驱动律动动图。 */
+    val level = mutableStateOf(0f)
+    /** 投送开始时刻（SystemClock.elapsedRealtime）；0=未投。用于时长计时。 */
+    val startedAt = mutableStateOf(0L)
+
+    private var discovery: AirplayDiscovery? = null
+    @Volatile private var casting = false
+    private var capture: SystemAudioCapture? = null
+    private var worker: Thread? = null
+    private var savedVolume: Int = -1
+    private var httpServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
+    private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
+    val isVideo = mutableStateOf(false)
+    val videoPos = mutableStateOf(0.0)
+    val videoDur = mutableStateOf(0.0)
+
+    // ---- PIN 配对 ----
+    val pinRequest = mutableStateOf<String?>(null)
+    /** 每次弹 PIN 框自增，驱动输入框清空（防残留旧值被误交）。 */
+    val pinNonce = mutableStateOf(0)
+    private val pinQueue = java.util.concurrent.ArrayBlockingQueue<String>(1)
+    private val PIN_CANCEL = " CANCEL"
+    @Volatile private var pinAborted = false
+
+    fun supportsVideo(d: AirDevice): Boolean = d.capabilities.supportsVideo
+
+    /** 凡 `_airplay._tcp` 发现的设备均可试投（实测 HomePod/Sonos/小米 均走标准 transient 配对）。 */
+    fun isCastable(d: AirDevice): Boolean = true
+
+    fun typeLabel(d: AirDevice): String = when (d.type) {
+        DeviceType.HOMEPOD -> "HomePod"
+        DeviceType.APPLE_TV -> "Apple TV"
+        DeviceType.MAC -> "Mac"
+        DeviceType.SONOS -> "Sonos"
+        DeviceType.XIAOMI -> if (L10n.lang.value == Lang.EN) "Xiaomi Speaker" else "小米音箱"
+        DeviceType.UNKNOWN -> if (L10n.lang.value == Lang.EN) "AirPlay device" else "AirPlay 设备"
+    }
+
+    fun startDiscovery(context: Context) {
+        if (discovering.value) return
+        discovering.value = true
+        devices.clear()
+        val d = AirplayDiscovery(context.applicationContext)
+        discovery = d
+        d.start(object : DeviceListener {
+            override fun onDeviceFound(device: AirDevice) {
+                val idx = devices.indexOfFirst { it.id == device.id }
+                if (idx >= 0) devices[idx] = device else devices.add(device)
+                // 自动选中第一台可投设备（若尚未选）
+                if (selected.value == null && isCastable(device)) selected.value = device
+            }
+            override fun onDeviceLost(device: AirDevice) {
+                devices.removeAll { it.id == device.id }
+            }
+            override fun onDiscoveryFailed(reason: String) {
+                statusLine.value = "${L10n.s.discoverFail}$reason"
+            }
+        })
+    }
+
+    fun stopDiscovery() {
+        runCatching { discovery?.stop() }
+        discovery = null
+        discovering.value = false
+    }
+
+    fun select(d: AirDevice) { selected.value = d }
+
+    /** 系统音频捕获投送（屏幕镜像仅声音 / 投应用 / 浏览器）。需 MediaProjection 授权结果。 */
+    fun startSystemAudioCast(context: Context, resultCode: Int, data: Intent) {
+        val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (!isCastable(device)) { statusLine.value = "${device.name} ${L10n.s.notSupportedSuffix}"; phase.value = CastPhase.ERROR; return }
+        val app = context.applicationContext
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} ${device.name} …"
+        casting = true
+        CaptureProjectionService.start(app)
+        worker = thread(name = "airsonic-cast", isDaemon = true) {
+            var cap: SystemAudioCapture? = null
+            try {
+                var waited = 0
+                while (!CaptureProjectionService.isForeground && waited < 2000) { Thread.sleep(50); waited += 50 }
+                val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val projection = pm.getMediaProjection(resultCode, data)
+                val cc = SystemAudioCapture(); cap = cc
+                if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
+                capture = cc
+                val (session, result) = connect(app, device)
+                    ?: run { fail(L10n.s.setupFail); return@thread }
+                mutePhone(app)
+                onCastingStarted(device.name)
+                session.streamCapturedPcm(
+                    result = result, channels = 2,
+                    isCancelled = { !casting },
+                    nextChunk = {
+                        val c = cc.readChunk(4096)
+                        if (c != null && c.size >= 64) level.value = peakOf(c)
+                        c
+                    }
+                ) {}
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}")
+            } finally {
+                cleanup(app, cap)
+            }
+        }
+    }
+
+    /** 本地媒体（音频文件 / 视频文件音轨）投送。 */
+    fun startFileCast(context: Context, uri: Uri) {
+        val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (!isCastable(device)) { statusLine.value = "${device.name} ${L10n.s.notSupportedSuffix}"; phase.value = CastPhase.ERROR; return }
+        val app = context.applicationContext
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} ${device.name} …"
+        casting = true
+        worker = thread(name = "airsonic-filecast", isDaemon = true) {
+            var pfd: ParcelFileDescriptor? = null
+            try {
+                val (session, result) = connect(app, device)
+                    ?: run { fail(L10n.s.setupFail); return@thread }
+                pfd = app.contentResolver.openFileDescriptor(uri, "r") ?: run { fail(L10n.s.openFail); return@thread }
+                mutePhone(app)
+                onCastingStarted(device.name)
+                session.streamAudio(result, pfd.fileDescriptor, realtimePacing = true, isCancelled = { !casting }) {}
+                if (casting) statusLine.value = L10n.s.playFinished
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}")
+            } finally {
+                runCatching { pfd?.close() }
+                cleanup(app, null)
+            }
+        }
+    }
+
+    /** 投视频：TV → /play 全屏播放；音箱 → 回退只投音轨。 */
+    fun startVideoCast(context: Context, uri: Uri) {
+        val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (!supportsVideo(device)) { startFileCast(context, uri); return }
+        val app = context.applicationContext
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} ${device.name} …"
+        casting = true; isVideo.value = true
+        worker = thread(name = "airsonic-video", isDaemon = true) {
+            try {
+                val src = ContentResolverRangeSource(app, uri)
+                if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
+                val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
+                val port = server.start(); httpServer = server
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return@thread }
+                val url = "http://$localIp:$port${server.path}"
+                val hs = pairFor(app, device) ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail); return@thread }
+                val ctl = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
+                if (!ctl.connect()) { fail(L10n.s.setupFail); return@thread }
+                videoCtl = ctl
+                if (!ctl.play(url, 0.0)) { fail(L10n.s.setupFail); return@thread }
+                onCastingStarted(device.name)
+                while (casting) {
+                    Thread.sleep(1000)
+                    val info = ctl.playbackInfo() ?: continue
+                    videoPos.value = info.first; videoDur.value = info.second
+                }
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}")
+            } finally {
+                videoCleanup()
+            }
+        }
+    }
+
+    fun submitPin(pin: String) { pinQueue.offer(pin) }
+    fun cancelPin() { pinQueue.offer(PIN_CANCEL) }
+
+    fun videoPause() { videoCtl?.rate(0) }
+    fun videoResume() { videoCtl?.rate(1) }
+    fun videoSeek(sec: Double) { videoCtl?.scrub(sec) }
+
+    fun stop() {
+        casting = false
+        runCatching { capture?.stop() }
+        runCatching { videoCtl?.stop() }
+    }
+
+    // ---- 内部 ----
+    private fun onCastingStarted(name: String) {
+        phase.value = CastPhase.CASTING
+        statusLine.value = "${L10n.s.castingTo} $name"
+        startedAt.value = android.os.SystemClock.elapsedRealtime()
+    }
+
+    private fun fail(msg: String) {
+        if (!casting) return
+        if (phase.value == CastPhase.ERROR) return   // 保留更靠内层、更具体的首个错误
+        statusLine.value = msg
+        phase.value = CastPhase.ERROR
+    }
+
+    private fun cleanup(app: Context, cap: SystemAudioCapture?) {
+        casting = false
+        runCatching { cap?.stop() }
+        capture = null
+        restorePhone(app)
+        runCatching { CaptureProjectionService.stop(app) }
+        startedAt.value = 0L
+        level.value = 0f
+        worker = null
+        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+    }
+
+    private fun localWifiIp(): String? = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address && it.hostAddress?.startsWith("169.254") == false }
+            ?.hostAddress
+    }.getOrNull()
+
+    private fun videoCleanup() {
+        casting = false
+        runCatching { videoCtl?.stop() }; runCatching { videoCtl?.close() }; videoCtl = null
+        runCatching { httpServer?.stop() }; httpServer = null
+        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
+        startedAt.value = 0L; level.value = 0f; worker = null
+        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+    }
+
+    /** 投送时压低手机媒体音量（仅 AirPlay 出声）；停止恢复。 */
+    private fun mutePhone(app: Context) {
+        runCatching {
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            savedVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+        }
+    }
+
+    private fun restorePhone(app: Context) {
+        if (savedVolume < 0) return
+        runCatching {
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0)
+        }
+        savedVolume = -1
+    }
+
+    data class DeviceProbe(val requiresAlac: Boolean, val requiresPin: Boolean)
+
+    /** 一次 GET /info 同时判：是否只收 ALAC、是否需要密码/PIN 配对。 */
+    private fun probeDevice(host: String): DeviceProbe = runCatching {
+        java.net.Socket().use { sock ->
+            sock.connect(java.net.InetSocketAddress(host, 7000), 3000); sock.soTimeout = 3000
+            sock.getOutputStream().apply {
+                write("GET /info RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: AirPlay/950.7.1\r\nX-Apple-HKP: 3\r\n\r\n".toByteArray(Charsets.US_ASCII)); flush()
+            }
+            val ins = sock.getInputStream(); val buf = java.io.ByteArrayOutputStream(); val tmp = ByteArray(4096)
+            var headerEnd = -1; var contentLen = -1
+            while (true) {
+                val n = ins.read(tmp); if (n < 0) break; buf.write(tmp, 0, n)
+                val arr = buf.toByteArray()
+                if (headerEnd < 0) {
+                    var i = 0
+                    while (i + 3 < arr.size) {
+                        if (arr[i]==13.toByte()&&arr[i+1]==10.toByte()&&arr[i+2]==13.toByte()&&arr[i+3]==10.toByte()) {
+                            headerEnd = i + 4
+                            val header = String(arr, 0, i, Charsets.US_ASCII)
+                            contentLen = Regex("(?i)Content-Length:\\s*(\\d+)").find(header)?.groupValues?.get(1)?.toIntOrNull() ?: -1
+                            break
+                        }; i++
+                    }
+                }
+                if (headerEnd >= 0 && contentLen >= 0 && arr.size >= headerEnd + contentLen) break
+            }
+            val all = buf.toByteArray()
+            if (headerEnd < 0) return@runCatching DeviceProbe(false, false)
+            val end = if (contentLen >= 0) minOf(all.size, headerEnd + contentLen) else all.size
+            val pl = BPlist.decode(all.copyOfRange(headerEnd, end)) as? Map<*, *> ?: return@runCatching DeviceProbe(false, false)
+            val saf = pl["supportedAudioFormatsExtended"] as? Map<*, *>
+            val codes = (saf?.get("audioStream") as? List<*>)?.mapNotNull { (it as? Long)?.toInt() ?: (it as? Int) } ?: emptyList()
+            val alac = codes.contains(18) && !codes.contains(11)
+            val sf = ((pl["statusFlags"] as? Number)?.toLong()) ?: 0L
+            val pin = (sf and 0x40L) != 0L || (sf and 0x8L) != 0L || (sf and 0x200L) != 0L
+            DeviceProbe(alac, pin)
+        }
+    }.getOrDefault(DeviceProbe(false, false))
+
+    private fun newHs(app: Context, device: AirDevice) =
+        PairingHandshake(device.host, device.port, PairingStore.pairingId(app), PairingStore.ltSeed(app))
+
+    /** 建立会话（对齐 pyatv）：会话通道**只在做过 pair-verify 的独立新连接**上。
+     *  已配对/PIN配对完成 → 新连接 pair-verify(该连接即会话)；开放设备 → transient(同连接即会话)。 */
+    private fun pairFor(app: Context, device: AirDevice): PairingHandshake? {
+        if (pinAborted) return null
+        // 1) 已配对 → 新连接 pair-verify（该连接即会话通道）
+        if (PairingStore.isPaired(app, device.host)) {
+            val hs = newHs(app, device)
+            if (hs.pairVerify {}) return hs
+            PairingStore.unpair(app, device.host)   // 对方已忘 → 清除重配
+        }
+        // 2) transient（开放设备：HomePod/Sonos/小米/无密码 Apple TV）→ 同连接即会话
+        run {
+            val hs = newHs(app, device)
+            if (hs.pairSetup("3939", onStep = {}, transient = true)) return hs
+        }
+        // 3) 需要密码 → PIN pair-setup(M1-M6,持久化身份) → 然后**另开新连接** pair-verify 建会话
+        if (!doPinSetup(app, device)) return null
+        val hs = newHs(app, device)
+        return if (hs.pairVerify {}) hs else { PairingStore.unpair(app, device.host); fail(L10n.s.pairFail); null }
+    }
+
+    /** PIN pair-setup（完整 M1-M6 交换 Ed25519 身份并持久化），不在此连接建会话。 */
+    private fun doPinSetup(app: Context, device: AirDevice): Boolean {
+        val hs = newHs(app, device)
+        if (!hs.pairPinStart()) { fail(L10n.s.pairFail); pinAborted = true; return false }
+        pinQueue.clear()
+        pinNonce.value++
+        pinRequest.value = device.name
+        val pin = try { pinQueue.poll(120, java.util.concurrent.TimeUnit.SECONDS) } finally { pinRequest.value = null }
+        if (pin == null || pin == PIN_CANCEL) { pinAborted = true; return false }
+        if (!hs.pairSetup(pin, onStep = {}, transient = false)) { fail(L10n.s.pairFail); pinAborted = true; return false }
+        PairingStore.markPaired(app, device.host)
+        return true
+    }
+
+    /** 配对(按需PIN) + SETUP(按/info选编码，失败换编码再试；二次走verify不再弹PIN)。 */
+    private fun connect(app: Context, device: AirDevice): Pair<AirplayStreamSession, AirplayStreamSession.StreamResult>? {
+        pinAborted = false
+        val probe = probeDevice(device.host)
+        fun attempt(useAlac: Boolean): Pair<AirplayStreamSession, AirplayStreamSession.StreamResult>? {
+            val hs = pairFor(app, device) ?: return null
+            val session = AirplayStreamSession(device.host, hs)
+            val result = session.setup(useAlac = useAlac) {} ?: return null
+            return session to result
+        }
+        return attempt(probe.requiresAlac) ?: attempt(!probe.requiresAlac)
+    }
+
+    private fun peakOf(pcm: ByteArray): Float {
+        var peak = 0
+        var i = 0
+        val n = minOf(pcm.size - 1, 2048)
+        while (i < n) {
+            val s = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)).toShort().toInt()
+            val a = if (s < 0) -s else s
+            if (a > peak) peak = a
+            i += 2
+        }
+        return (peak / 32767f).coerceIn(0f, 1f)
+    }
+}

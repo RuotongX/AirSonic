@@ -1,0 +1,31 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 调试产物(截图/日志/抓包/音频输出)
+/*.png
+/*.wav
+/*.log
+/*.pcap
+/ui.xml
+__pycache__/
+
+# 本地研究/调试资料（含真机参数），不公开
+/recon/
+/docs/
+/PROJECT_STATUS.md
+/开发计划.md
+/兼容性测试表.md
+/调试进展_*.md
+/recon_报告_*.txt
+/recon_real_device.sh
+
+# 发布签名密钥绝不进仓库
+*.keystore
+*.jks

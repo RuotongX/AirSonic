@@ -1,0 +1,758 @@
+package com.airsonic.demo.ui
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.os.Build
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import android.content.Context
+import com.airsonic.sender.api.AirDevice
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.ScreenShare
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Speaker
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.shadow
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.airsonic.demo.ui.theme.Aurora
+import com.airsonic.demo.ui.theme.glass
+
+/** Activity 提供的需要系统能力的动作。 */
+class CastActions(
+    val requestSystemAudioCast: () -> Unit,
+    val openDebug: () -> Unit,
+)
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun PinDialogHost() {
+    val deviceName = CastEngine.pinRequest.value ?: return
+    var pin by remember(CastEngine.pinNonce.value) { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { CastEngine.cancelPin() },
+        title = { Text("${L10n.s.pinTitle} · $deviceName", color = Aurora.TextPrimary) },
+        text = {
+            Column {
+                Text(L10n.s.pinHint, color = Aurora.TextDim, fontSize = 13.sp)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) pin = it },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Aurora.TextPrimary, fontSize = 22.sp),
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { if (pin.length == 4) CastEngine.submitPin(pin) },
+                enabled = pin.length == 4,
+            ) { Text(L10n.s.confirm, color = Aurora.Cyan) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { CastEngine.cancelPin() }) {
+                Text(L10n.s.cancel, color = Aurora.TextDim)
+            }
+        },
+        containerColor = Aurora.Surface,
+    )
+}
+
+@Composable
+fun AppNav(actions: CastActions) {
+    val nav = rememberNavController()
+    Box(Modifier.fillMaxSize()) {
+        NavHost(navController = nav, startDestination = "splash") {
+            composable("splash") { SplashScreen { nav.navigate("main") { popUpTo("splash") { inclusive = true } } } }
+            composable("main") { MainScreen(nav) }
+            composable("mirror") { MirrorScreen(nav, actions) }
+            composable("audio") { MediaListScreen(nav, isVideo = false) }
+            composable("video") { MediaListScreen(nav, isVideo = true) }
+            composable("settings") { SettingsScreen(nav, actions) }
+        }
+        PinDialogHost()
+    }
+}
+
+// ============ 开屏 ============
+@Composable
+fun SplashScreen(onDone: () -> Unit) {
+    var remain by remember { mutableStateOf(6) }
+    LaunchedEffect(Unit) {
+        while (remain > 0) { kotlinx.coroutines.delay(1000); remain-- }
+        onDone()
+    }
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            AirSonicLogo(modifier = Modifier.size(160.dp), animated = true)
+            Spacer(Modifier.height(20.dp))
+            Text("AirSonic", color = Aurora.TextPrimary, fontSize = 38.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(L10n.s.tagline, color = Aurora.TextSecondary, fontSize = 14.sp)
+        }
+        // 跳过倒计时（右上角，可点立即跳过）
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(20.dp)
+                .glass(radius = 18)
+                .clickable { onDone() }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Text("${L10n.s.skip} ${remain}s", color = Aurora.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+// ============ 主页 ============
+@Composable
+fun MainScreen(nav: NavHostController) {
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { CastEngine.startDiscovery(ctx) }
+    var showDevices by remember { mutableStateOf(false) }
+    val selected by CastEngine.selected
+    val phase by CastEngine.phase
+    val s = L10n.s
+
+    BackHandler(enabled = showDevices) { showDevices = false }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxSize()
+                .blur(if (showDevices) 18.dp else 0.dp)   // 下拉设备时背景磨砂
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp).padding(top = 20.dp, bottom = 24.dp)
+        ) {
+            // 顶部：设备选择 + 设置
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.glass(radius = 22).clickable { showDevices = true }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Cast, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(selected?.let { DevicePrefs.displayName(ctx, it) } ?: s.selectDevice, color = Aurora.TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Rounded.ExpandMore, null, tint = Aurora.TextSecondary, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier.size(44.dp).glass(radius = 22).clickable { nav.navigate("settings") },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Settings, s.settings, tint = Aurora.TextSecondary, modifier = Modifier.size(22.dp)) }
+            }
+
+            Spacer(Modifier.height(22.dp))
+            MirrorHeroCard(animated = phase == CastPhase.CASTING) { nav.navigate("mirror") }
+
+            Spacer(Modifier.height(26.dp))
+            SectionTitle(s.localMedia)
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                EntryCard(Icons.Rounded.Videocam, s.video, Color(0xFF4A8CFF), Modifier.weight(1f)) { nav.navigate("video") }
+                EntryCard(Icons.Rounded.LibraryMusic, s.audio, Color(0xFFFF9F40), Modifier.weight(1f)) { nav.navigate("audio") }
+            }
+        }
+
+        // 设备选择浮层（背景磨砂 + 半透遮罩）
+        if (showDevices) {
+            Box(
+                Modifier.fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.25f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { showDevices = false }
+            )
+            Box(
+                Modifier.align(Alignment.TopStart).fillMaxWidth()
+                    .padding(top = 78.dp, start = 20.dp, end = 20.dp)
+            ) {
+                DevicePanel { showDevices = false }
+            }
+        }
+    }
+}
+
+/** 大「屏幕镜像」hero 卡 —— AirSonic 自有品牌：青→品红渐变 + 原创声波标识。 */
+@Composable
+private fun MirrorHeroCard(animated: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(150.dp)
+            .shadow(16.dp, RoundedCornerShape(28.dp), clip = false,
+                ambientColor = Aurora.Magenta.copy(alpha = 0.5f), spotColor = Aurora.Cyan.copy(alpha = 0.5f))
+            .background(Aurora.brandBrush, RoundedCornerShape(28.dp))
+            .clickable(onClick = onClick)
+            .padding(28.dp),
+    ) {
+        Column(Modifier.align(Alignment.CenterStart)) {
+            Text(L10n.s.mirrorTitle, color = Color(0xFF071018), fontSize = 27.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(L10n.s.mirrorSub, color = Color(0xCC071018), fontSize = 13.sp)
+        }
+        // 原创 AirSonic 声波标识（深色，叠在品牌渐变上）
+        AirSonicLogo(
+            modifier = Modifier.align(Alignment.CenterEnd).size(96.dp),
+            animated = animated,
+            color = Color(0xFF071018),
+        )
+    }
+}
+
+/** 功能入口卡（彩色图标磁贴 + 标签）。 */
+@Composable
+private fun EntryCard(icon: ImageVector, label: String, iconColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier = modifier.aspectRatio(1.15f).glass(radius = 22).clickable(onClick = onClick).padding(18.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Box(
+            Modifier.size(52.dp).background(iconColor, RoundedCornerShape(15.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(28.dp)) }
+        Text(label, color = Aurora.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+// ============ app 内媒体浏览器（音频 / 视频）============
+private fun mediaPermission(isVideo: Boolean): String =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        (if (isVideo) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_MEDIA_AUDIO)
+    else Manifest.permission.READ_EXTERNAL_STORAGE
+
+@Composable
+fun MediaListScreen(nav: NavHostController, isVideo: Boolean) {
+    val ctx = LocalContext.current
+    val perm = mediaPermission(isVideo)
+    var granted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED)
+    }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
+    var items by remember { mutableStateOf<List<MediaLibrary.Item>>(emptyList()) }
+    val s = L10n.s
+    LaunchedEffect(granted) {
+        if (granted) items = withContext(Dispatchers.IO) {
+            if (isVideo) MediaLibrary.queryVideo(ctx) else MediaLibrary.queryAudio(ctx)
+        }
+    }
+    ScreenScaffold(nav, if (isVideo) s.castVideo else s.castAudio) {
+        when {
+            !granted -> {
+                Box(Modifier.fillMaxWidth().glass(radius = 18).padding(20.dp)) {
+                    Column {
+                        Text(s.needMedia, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(s.grantDesc, color = Aurora.TextDim, fontSize = 12.sp)
+                        Spacer(Modifier.height(14.dp))
+                        PrimaryButton(s.grant) { launcher.launch(perm) }
+                    }
+                }
+            }
+            items.isEmpty() -> Text(if (isVideo) s.noVideo else s.noAudio, color = Aurora.TextDim, fontSize = 14.sp)
+            else -> items.forEach { item ->
+                MediaRow(item) {
+                    if (isVideo) CastEngine.startVideoCast(ctx, item.uri)
+                    else CastEngine.startFileCast(ctx, item.uri)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+        CastZone()
+    }
+}
+
+@Composable
+private fun MediaRow(item: MediaLibrary.Item, onClick: () -> Unit) {
+    val ctx = LocalContext.current
+    val thumb by produceState<Bitmap?>(initialValue = null, item.uri) {
+        value = withContext(Dispatchers.IO) { MediaLibrary.thumbnail(ctx, item) }
+    }
+    Row(
+        Modifier.fillMaxWidth().glass(radius = 16).clickable(onClick = onClick).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(54.dp).clip(RoundedCornerShape(11.dp)).background(Aurora.Surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            val t = thumb
+            if (t != null) Image(bitmap = t.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
+            else Icon(if (item.isVideo) Icons.Rounded.Movie else Icons.Rounded.MusicNote, null, tint = Aurora.Cyan, modifier = Modifier.size(26.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(item.name, color = Aurora.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(
+                buildString {
+                    append(item.durationText)
+                    if (item.resText.isNotEmpty()) append("  ·  ${item.resText}")
+                },
+                color = Aurora.TextDim, fontSize = 12.sp,
+            )
+        }
+        Icon(Icons.Rounded.Cast, null, tint = Aurora.Cyan, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun DevicePanel(onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    DevicePrefs.version.value  // 观察持久化变更触发重组
+    var renameTarget by remember { mutableStateOf<AirDevice?>(null) }
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var showHidden by remember { mutableStateOf(false) }
+
+    val hidden = CastEngine.devices.filter { DevicePrefs.isHidden(ctx, it) }
+    val visible = CastEngine.devices.filter { !DevicePrefs.isHidden(ctx, it) }
+
+    Column(
+        Modifier.fillMaxWidth()
+            .shadow(18.dp, RoundedCornerShape(20.dp), clip = false,
+                ambientColor = Aurora.Magenta.copy(alpha = 0.4f), spotColor = Aurora.Cyan.copy(alpha = 0.4f))
+            .background(Aurora.Surface.copy(alpha = 0.98f), RoundedCornerShape(20.dp))  // 近实底，文字清晰
+            .border(1.dp, Aurora.GlassStroke, RoundedCornerShape(20.dp))
+            .padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle(L10n.s.devicesOnWifi)
+            Spacer(Modifier.weight(1f))
+            if (hidden.isNotEmpty()) {
+                Text("${L10n.s.hiddenDevices} ${hidden.size}",
+                    color = if (showHidden) Aurora.Cyan else Aurora.TextDim, fontSize = 13.sp,
+                    modifier = Modifier.clickable { showHidden = !showHidden })
+                Spacer(Modifier.width(14.dp))
+            }
+            Text(L10n.s.refresh, color = Aurora.Cyan, fontSize = 13.sp,
+                modifier = Modifier.clickable { CastEngine.stopDiscovery(); CastEngine.startDiscovery(ctx) })
+        }
+        Spacer(Modifier.height(8.dp))
+        if (visible.isEmpty() && hidden.isEmpty()) {
+            Text(L10n.s.noDevices, color = Aurora.TextDim, fontSize = 14.sp, modifier = Modifier.padding(vertical = 10.dp))
+        } else {
+            visible.forEach { d ->
+                val castable = CastEngine.isCastable(d)
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(8.dp).background(if (castable) Aurora.Cyan else Aurora.TextDim, RoundedCornerShape(50)))
+                    Spacer(Modifier.width(10.dp))
+                    Column(
+                        Modifier.weight(1f).clickable(enabled = castable) { CastEngine.select(d); onClose() }
+                    ) {
+                        Text(DevicePrefs.displayName(ctx, d), color = if (castable) Aurora.TextPrimary else Aurora.TextDim, fontSize = 15.sp)
+                        Text(CastEngine.typeLabel(d), color = Aurora.TextDim, fontSize = 11.sp)
+                    }
+                    if (CastEngine.selected.value?.id == d.id) {
+                        Text("✓", color = Aurora.Cyan, fontSize = 16.sp); Spacer(Modifier.width(6.dp))
+                    }
+                    Box {
+                        Text("⋯", color = Aurora.TextDim, fontSize = 22.sp,
+                            modifier = Modifier.clickable { menuFor = d.id }.padding(horizontal = 6.dp))
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = menuFor == d.id, onDismissRequest = { menuFor = null },
+                            modifier = Modifier.background(Aurora.Surface),
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(L10n.s.rename, color = Aurora.TextPrimary) },
+                                onClick = { renameTarget = d; menuFor = null })
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(L10n.s.hide, color = Aurora.TextPrimary) },
+                                onClick = { DevicePrefs.setHidden(ctx, d, true); menuFor = null })
+                        }
+                    }
+                }
+            }
+        }
+        if (showHidden && hidden.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Aurora.GlassStroke))
+            Spacer(Modifier.height(6.dp))
+            Text(L10n.s.hiddenDevices, color = Aurora.TextDim, fontSize = 11.sp)
+            hidden.forEach { d ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(DevicePrefs.displayName(ctx, d), color = Aurora.TextDim, fontSize = 14.sp)
+                        Text(CastEngine.typeLabel(d), color = Aurora.TextDim, fontSize = 11.sp)
+                    }
+                    Text(L10n.s.unhide, color = Aurora.Cyan, fontSize = 13.sp,
+                        modifier = Modifier.clickable { DevicePrefs.setHidden(ctx, d, false) })
+                }
+            }
+        }
+    }
+    renameTarget?.let { d -> RenameDeviceDialog(ctx, d) { renameTarget = null } }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun RenameDeviceDialog(ctx: Context, device: AirDevice, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(DevicePrefs.displayName(ctx, device)) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${L10n.s.rename} · ${device.name}", color = Aurora.TextPrimary, fontSize = 16.sp) },
+        text = {
+            OutlinedTextField(
+                value = text, onValueChange = { text = it }, singleLine = true,
+                label = { Text(L10n.s.renameHint, color = Aurora.TextDim) },
+                textStyle = androidx.compose.ui.text.TextStyle(color = Aurora.TextPrimary, fontSize = 18.sp),
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                DevicePrefs.setCustomName(ctx, device, text.takeIf { it.isNotBlank() && it.trim() != device.name })
+                onDismiss()
+            }) { Text(L10n.s.confirm, color = Aurora.Cyan) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text(L10n.s.cancel, color = Aurora.TextDim) }
+        },
+        containerColor = Aurora.Surface,
+    )
+}
+
+@Composable
+private fun VideoControlBar(deviceName: String) {
+    val pos = CastEngine.videoPos.value.toFloat()
+    val dur = CastEngine.videoDur.value.toFloat()
+    var paused by remember { mutableStateOf(false) }
+    var dragPos by remember { mutableStateOf<Float?>(null) }
+    Column(
+        Modifier.fillMaxWidth().glass(radius = 24, strong = true).padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("${L10n.s.videoOnTv} · $deviceName", color = Aurora.TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(10.dp))
+        androidx.compose.material3.Slider(
+            value = dragPos ?: pos,
+            onValueChange = { dragPos = it },
+            valueRange = 0f..(if (dur > 0f) dur else 1f),
+            onValueChangeFinished = {
+                dragPos?.let { CastEngine.videoSeek(it.toDouble()) }
+                dragPos = null
+            },
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) {
+                GlassButton(if (paused) L10n.s.resume else L10n.s.pause) {
+                    if (paused) CastEngine.videoResume() else CastEngine.videoPause(); paused = !paused
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                GlassButton(L10n.s.stop) { CastEngine.stop() }
+            }
+        }
+    }
+}
+
+// ============ 通用：返回头 + 投送区 ============
+@Composable
+private fun ScreenScaffold(nav: NavHostController, title: String, content: @Composable () -> Unit) {
+    // 进入页面清理上一次的残留状态（避免显示陈旧的"已取消"等）
+    LaunchedEffect(title) { if (CastEngine.phase.value != CastPhase.CASTING) CastEngine.statusLine.value = "" }
+    Column(
+        Modifier.fillMaxSize()
+            .padding(horizontal = 20.dp).padding(top = 24.dp, bottom = 20.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).glass(radius = 20).clickable { nav.popBackStack() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.ChevronLeft, contentDescription = L10n.s.back, tint = Aurora.TextPrimary, modifier = Modifier.size(26.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(title, color = Aurora.TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(24.dp))
+        content()
+    }
+}
+
+@Composable
+private fun CastZone() {
+    val ctx = LocalContext.current
+    val phase by CastEngine.phase
+    val status by CastEngine.statusLine
+    val selected by CastEngine.selected
+    val started by CastEngine.startedAt
+    val level by CastEngine.level
+    val name = selected?.let { DevicePrefs.displayName(ctx, it) } ?: L10n.s.device
+    Spacer(Modifier.height(18.dp))
+    when (phase) {
+        CastPhase.CASTING ->
+            if (CastEngine.isVideo.value) VideoControlBar(name)
+            else CastingBar(name, started, level) { CastEngine.stop() }
+        CastPhase.CONNECTING -> Text(status, color = Aurora.Cyan, fontSize = 14.sp)
+        CastPhase.ERROR -> Text(status, color = Aurora.Magenta, fontSize = 14.sp)
+        CastPhase.IDLE -> if (status.isNotEmpty()) Text(status, color = Aurora.TextDim, fontSize = 13.sp)
+    }
+}
+
+// ============ 屏幕镜像（音频优先） ============
+@Composable
+fun MirrorScreen(nav: NavHostController, actions: CastActions) {
+    var res by remember { mutableStateOf(0) }
+    var fps by remember { mutableStateOf(0) }
+    var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
+    val phase by CastEngine.phase
+    val s = L10n.s
+    val auto = if (L10n.lang.value == Lang.EN) "Auto" else "自动"
+    ScreenScaffold(nav, s.mirrorTitle) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle(s.resolution); Spacer(Modifier.width(8.dp)); ComingSoonTag()
+        }
+        Spacer(Modifier.height(8.dp))
+        Segmented(listOf(auto, "2K", "1080p", "720p"), res, enabled = false) { res = it }
+        Spacer(Modifier.height(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle(s.frameRate); Spacer(Modifier.width(8.dp)); ComingSoonTag()
+        }
+        Spacer(Modifier.height(8.dp))
+        Segmented(listOf(auto, "60fps", "30fps"), fps, enabled = false) { fps = it }
+        Spacer(Modifier.height(18.dp))
+        SectionTitle(s.sound)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth().glass(radius = 16)
+                .clickable { soundOn = !soundOn }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(s.soundOnly, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(s.soundOnlyDesc, color = Aurora.TextDim, fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(12.dp))
+            Box(
+                Modifier.size(28.dp)
+                    .background(if (soundOn) Aurora.Cyan else Color.Transparent, RoundedCornerShape(50))
+                    .border(1.5.dp, if (soundOn) Aurora.Cyan else Aurora.TextDim, RoundedCornerShape(50)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (soundOn) Text("✓", color = Color(0xFF00131A), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        if (phase != CastPhase.CASTING) {
+            PrimaryButton(s.startMirror, enabled = soundOn) { actions.requestSystemAudioCast() }
+        }
+        CastZone()
+    }
+}
+
+// ============ 设置 ============
+@Composable
+fun SettingsScreen(nav: NavHostController, actions: CastActions) {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    ScreenScaffold(nav, s.settings) {
+        // 语言切换
+        Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Language, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+                Spacer(Modifier.width(12.dp))
+                Text(s.language, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(12.dp))
+            Segmented(
+                options = listOf("中文", "English"),
+                selectedIndex = if (L10n.lang.value == Lang.EN) 1 else 0,
+            ) { idx -> L10n.set(ctx, if (idx == 1) Lang.EN else Lang.ZH) }
+        }
+        Spacer(Modifier.height(12.dp))
+        SettingRow(Icons.Rounded.Speaker, s.supportTitle, s.supportSub)
+        SettingRow(Icons.Rounded.ScreenShare, s.howTitle, s.howSub)
+        UpdateRow()
+        SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            s.version,
+            color = Aurora.TextDim, fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+    }
+}
+
+/** 在线更新行：点一下查 GitHub Releases；查到新版再点即下载并拉起安装器。 */
+@Composable
+private fun UpdateRow() {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    val scope = rememberCoroutineScope()
+
+    // 状态机：idle / checking / uptodate / available / downloading / failed
+    var status by remember { mutableStateOf("idle") }
+    var release by remember { mutableStateOf<Updater.Release?>(null) }
+    var progress by remember { mutableStateOf(0) }
+
+    val title = if (status == "available") s.download else s.checkUpdate
+    val sub = when (status) {
+        "checking" -> s.checking
+        "uptodate" -> "${s.upToDate} · v${Updater.currentVersion}"
+        "available" -> "${s.newVersion} v${release?.versionName}"
+        "downloading" -> "${s.downloading} ${if (progress >= 0) "$progress%" else "…"}"
+        "failed" -> s.updateFailed
+        else -> "${s.checkUpdateSub} v${Updater.currentVersion}"
+    }
+    val busy = status == "checking" || status == "downloading"
+
+    val onClick: () -> Unit = onClick@{
+        if (busy) return@onClick
+        val rel = release
+        if (status == "available" && rel != null) {
+            val url = rel.apkUrl
+            if (url == null) { Updater.openReleasePage(ctx, rel.htmlUrl); return@onClick }
+            status = "downloading"; progress = 0
+            scope.launch {
+                val apk = Updater.downloadApk(ctx, url) { progress = it }
+                if (apk != null) { status = "available"; Updater.installApk(ctx, apk) }
+                else status = "failed"
+            }
+        } else {
+            status = "checking"
+            scope.launch {
+                val rel2 = Updater.checkLatest()
+                when {
+                    rel2 == null -> status = "failed"
+                    Updater.isNewer(rel2.versionName, Updater.currentVersion) -> {
+                        release = rel2; status = "available"
+                    }
+                    else -> status = "uptodate"
+                }
+            }
+        }
+    }
+
+    Row(
+        Modifier.fillMaxWidth().glass(radius = 16).clickable(enabled = !busy) { onClick() }.padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (busy) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF00131A),
+                )
+            } else {
+                Icon(Icons.Rounded.SystemUpdate, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(sub, color = if (status == "available") Aurora.Cyan else Aurora.TextDim, fontSize = 12.sp)
+        }
+        if (!busy) Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(22.dp))
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+@Composable
+private fun SettingRow(icon: ImageVector?, title: String, sub: String, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().glass(radius = 16)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            Box(
+                Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(sub, color = Aurora.TextDim, fontSize = 12.sp)
+        }
+        if (onClick != null) Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(22.dp))
+    }
+    Spacer(Modifier.height(12.dp))
+}
