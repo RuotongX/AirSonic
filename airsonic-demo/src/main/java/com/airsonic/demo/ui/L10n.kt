@@ -80,6 +80,13 @@ data class Strings(
     val updateFailed: String,      // 检查失败 / Check failed
     val openInBrowser: String,     // 在浏览器打开 / Open in browser
     val dlnaDevice: String,         // DLNA 设备 / DLNA device
+    val protocolsTitle: String,     // 支持的协议 / Supported protocols
+    val protoAirplay: String,       // AirPlay / AirPlay 2
+    val protoAirplaySub: String,    // HomePod · 音箱 · Apple TV · Mac
+    val protoDlna: String,          // DLNA / UPnP
+    val protoDlnaSub: String,       // 智能电视 · 盒子 · Kodi
+    val tagAudio: String,           // 音频 / Audio
+    val tagVideoAudio: String,      // 视频+音频 / Video+Audio
 )
 
 private val ZH = Strings(
@@ -112,6 +119,10 @@ private val ZH = Strings(
     newVersion = "发现新版本", download = "下载并安装", downloading = "下载中", updateFailed = "检查失败",
     openInBrowser = "在浏览器打开",
     dlnaDevice = "DLNA 设备",
+    protocolsTitle = "支持的协议",
+    protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · 音箱 · Apple TV · Mac",
+    protoDlna = "DLNA / UPnP", protoDlnaSub = "智能电视 · 盒子 · Kodi",
+    tagAudio = "音频", tagVideoAudio = "视频+音频",
 )
 
 private val EN = Strings(
@@ -144,6 +155,10 @@ private val EN = Strings(
     newVersion = "New version", download = "Download & install", downloading = "Downloading", updateFailed = "Check failed",
     openInBrowser = "Open in browser",
     dlnaDevice = "DLNA device",
+    protocolsTitle = "Supported protocols",
+    protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · Speakers · Apple TV · Mac",
+    protoDlna = "DLNA / UPnP", protoDlnaSub = "Smart TV · Box · Kodi",
+    tagAudio = "Audio", tagVideoAudio = "Video+Audio",
 )
 
 object L10n {

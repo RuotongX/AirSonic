@@ -643,7 +643,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             ) { idx -> L10n.set(ctx, if (idx == 1) Lang.EN else Lang.ZH) }
         }
         Spacer(Modifier.height(12.dp))
-        SettingRow(Icons.Rounded.Speaker, s.supportTitle, s.supportSub)
+        ProtocolsCard()
         SettingRow(Icons.Rounded.ScreenShare, s.howTitle, s.howSub)
         UpdateRow()
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
@@ -731,6 +731,43 @@ private fun UpdateRow() {
         if (!busy) Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(22.dp))
     }
     Spacer(Modifier.height(12.dp))
+}
+
+/** 支持的协议卡片：AirPlay 与 DLNA/UPnP 各投什么、覆盖哪些设备。 */
+@Composable
+private fun ProtocolsCard() {
+    val s = L10n.s
+    Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Cast, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+            Spacer(Modifier.width(12.dp))
+            Text(s.protocolsTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(14.dp))
+        ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagAudio)
+        Spacer(Modifier.height(12.dp))
+        ProtocolLine(s.protoDlna, s.protoDlnaSub, s.tagVideoAudio)
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+@Composable
+private fun ProtocolLine(name: String, sub: String, tag: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(name, color = Aurora.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(sub, color = Aurora.TextDim, fontSize = 12.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier
+                .background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) { Text(tag, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+    }
 }
 
 @Composable
