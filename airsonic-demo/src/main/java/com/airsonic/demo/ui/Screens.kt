@@ -145,6 +145,7 @@ fun AppNav(actions: CastActions) {
             composable("audio") { MediaListScreen(nav, isVideo = false) }
             composable("video") { MediaListScreen(nav, isVideo = true) }
             composable("settings") { SettingsScreen(nav, actions) }
+            composable("protocols") { ProtocolsScreen(nav) }
         }
         PinDialogHost()
     }
@@ -646,15 +647,8 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             ) { idx -> L10n.set(ctx, if (idx == 1) Lang.EN else Lang.ZH) }
         }
         Spacer(Modifier.height(12.dp))
-        ProtocolsCard()
-        SettingRow(Icons.Rounded.Cast, s.screenMirrorTitle, s.screenMirrorSub) {
-            // 方案1：DLNA 投不了屏幕镜像 → 直接调起系统无线投屏(Miracast)，挑食机型降级到无线设置。
-            val opened = listOf("android.settings.CAST_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS).any { action ->
-                runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
-            }
-            if (!opened) Toast.makeText(ctx, s.castSettingsUnavailable, Toast.LENGTH_SHORT).show()
-        }
-        SettingRow(Icons.Rounded.ScreenShare, s.howTitle, s.howSub)
+        SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
+        SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
         UpdateRow()
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
         Spacer(Modifier.height(16.dp))
@@ -743,30 +737,32 @@ private fun UpdateRow() {
     Spacer(Modifier.height(12.dp))
 }
 
-/** 支持的协议卡片：AirPlay 与 DLNA/UPnP 各投什么、覆盖哪些设备。 */
+/** 「支持的协议」详情页：AirPlay / DLNA 为自研投送；Miracast 屏幕镜像为系统投屏(点击直达)。 */
 @Composable
-private fun ProtocolsCard() {
+fun ProtocolsScreen(nav: NavHostController) {
+    val ctx = LocalContext.current
     val s = L10n.s
-    Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.Cast, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
-            Spacer(Modifier.width(12.dp))
-            Text(s.protocolsTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    ScreenScaffold(nav, s.protocolsTitle) {
+        Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+            ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagAudio, Aurora.Cyan)
+            Spacer(Modifier.height(16.dp))
+            ProtocolLine(s.protoDlna, s.protoDlnaSub, s.tagVideoAudio, Aurora.Cyan)
+            Spacer(Modifier.height(16.dp))
+            // Miracast 非自研 → 灰色「系统」标签区分，点击调起系统无线投屏。
+            ProtocolLine(s.screenMirrorTitle, s.screenMirrorSub, s.tagSystem, Aurora.TextDim) {
+                launchSystemCast(ctx)
+            }
         }
-        Spacer(Modifier.height(14.dp))
-        ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagAudio)
-        Spacer(Modifier.height(12.dp))
-        ProtocolLine(s.protoDlna, s.protoDlnaSub, s.tagVideoAudio)
     }
-    Spacer(Modifier.height(12.dp))
 }
 
 @Composable
-private fun ProtocolLine(name: String, sub: String, tag: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+private fun ProtocolLine(name: String, sub: String, tag: String, tagColor: Color, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
             Text(name, color = Aurora.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             Text(sub, color = Aurora.TextDim, fontSize = 12.sp)
@@ -774,10 +770,19 @@ private fun ProtocolLine(name: String, sub: String, tag: String) {
         Spacer(Modifier.width(8.dp))
         Box(
             Modifier
-                .background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                .background(tagColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp),
-        ) { Text(tag, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+        ) { Text(tag, color = tagColor, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+        if (onClick != null) Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
     }
+}
+
+/** 方案1：调起系统无线投屏(Miracast)；挑食机型降级到无线设置，再不行弹提示。 */
+private fun launchSystemCast(ctx: android.content.Context) {
+    val opened = listOf("android.settings.CAST_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS).any { action ->
+        runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+    }
+    if (!opened) Toast.makeText(ctx, L10n.s.castSettingsUnavailable, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
