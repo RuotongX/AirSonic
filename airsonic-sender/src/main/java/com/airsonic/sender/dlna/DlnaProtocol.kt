@@ -54,3 +54,21 @@ fun buildDidl(title: String, url: String, mime: String, isVideo: Boolean): Strin
         """<res protocolInfo="${escapeXml(proto)}">${escapeXml(url)}</res>""" +
         """</item></DIDL-Lite>"""
 }
+
+const val AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+
+/** SOAPACTION 头值（含外层引号）。 */
+fun soapAction(action: String): String = "\"$AVTRANSPORT#$action\""
+
+/** 完整 SOAP 信封；paramsXml 为动作参数（不含 InstanceID，函数自动加）。 */
+fun soapBody(action: String, paramsXml: String): String =
+    """<?xml version="1.0" encoding="utf-8"?>""" +
+    """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" """ +
+    """s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>""" +
+    """<u:$action xmlns:u="$AVTRANSPORT"><InstanceID>0</InstanceID>$paramsXml</u:$action>""" +
+    """</s:Body></s:Envelope>"""
+
+/** SetAVTransportURI 的参数：URI 转义 + DIDL 用 CDATA 包裹。 */
+fun setAvTransportUriParams(url: String, didl: String): String =
+    "<CurrentURI>${escapeXml(url)}</CurrentURI>" +
+    "<CurrentURIMetaData><![CDATA[$didl]]></CurrentURIMetaData>"
