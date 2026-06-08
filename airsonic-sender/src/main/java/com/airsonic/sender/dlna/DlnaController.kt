@@ -2,12 +2,24 @@ package com.airsonic.sender.dlna
 
 import android.util.Log
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
 
 /** 对一个 AVTransport controlUrl 发 SOAP 控制动作。 */
 class DlnaController(private val controlUrl: String) {
     var lastError: String = ""
         private set
+
+    /**
+     * 防 SSRF：controlUrl 来自 SSDP 发现的设备描述（未信任源），恶意设备可把它指向
+     * 回环/链路本地(169.254 云元数据)/任意内网主机。DLNA 只在局域网用 → 只允许
+     * http(s) + RFC1918 站点本地地址（站点本地天然排除回环与链路本地）。构造时校验一次。
+     */
+    private val allowed: Boolean = runCatching {
+        val u = URL(controlUrl)
+        u.protocol.lowercase() in listOf("http", "https") &&
+            InetAddress.getByName(u.host).isSiteLocalAddress
+    }.getOrDefault(false)
 
     fun setUri(url: String, didl: String): Boolean =
         action("SetAVTransportURI", setAvTransportUriParams(url, didl)) != null
@@ -27,6 +39,7 @@ class DlnaController(private val controlUrl: String) {
 
     /** 发一个 SOAP 动作；成功返回响应 body，失败返回 null 并写 lastError。 */
     private fun action(name: String, paramsXml: String): String? {
+        if (!allowed) { lastError = "rejected non-LAN controlUrl"; return null }
         return runCatching {
             val conn = (URL(controlUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
