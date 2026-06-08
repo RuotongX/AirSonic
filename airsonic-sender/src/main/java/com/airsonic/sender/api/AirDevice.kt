@@ -17,7 +17,7 @@ data class DeviceCapabilities(
 /**
  * 设备类型（用于 UI 展示与功能裁剪）。
  */
-enum class DeviceType { APPLE_TV, HOMEPOD, SONOS, MAC, XIAOMI, UNKNOWN }
+enum class DeviceType { APPLE_TV, HOMEPOD, SONOS, MAC, XIAOMI, DLNA, UNKNOWN }
 
 /**
  * 一台被发现的 AirPlay 接收设备。
@@ -30,7 +30,9 @@ data class AirDevice(
     val type: DeviceType = DeviceType.UNKNOWN,
     val capabilities: DeviceCapabilities = DeviceCapabilities(),
     /** 原始 TXT 记录，便于调试与能力解析。 */
-    val txtRecords: Map<String, String> = emptyMap()
+    val txtRecords: Map<String, String> = emptyMap(),
+    /** DLNA 渲染器的 AVTransport 绝对 controlURL；非 DLNA 设备为 null。 */
+    val controlUrl: String? = null,
 ) {
     val id: String get() = "$host:$port"
 }
