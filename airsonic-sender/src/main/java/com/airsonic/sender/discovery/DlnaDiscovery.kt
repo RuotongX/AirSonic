@@ -6,8 +6,8 @@ import android.util.Log
 import com.airsonic.sender.api.AirDevice
 import com.airsonic.sender.api.DeviceListener
 import com.airsonic.sender.api.DeviceType
+import com.airsonic.sender.dlna.fetchLanText
 import java.net.DatagramPacket
-import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.MulticastSocket
@@ -78,21 +78,9 @@ class DlnaDiscovery(context: Context) {
         }
     }
 
-    /** 防 SSRF：LOCATION 来自未信任的 SSDP 应答，只允许 http(s)+局域网(站点本地)地址。 */
-    private fun isLanHttp(raw: String): Boolean = runCatching {
-        val u = URL(raw)
-        u.protocol.lowercase() in listOf("http", "https") &&
-            InetAddress.getByName(u.host).isSiteLocalAddress
-    }.getOrDefault(false)
-
     private fun resolveLocation(loc: String) {
-        if (!isLanHttp(loc)) { seen.remove(loc); return }
-        val xml = runCatching {
-            val conn = (URL(loc).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 3000; readTimeout = 3000
-            }
-            conn.inputStream.bufferedReader().use { it.readText() }.also { conn.disconnect() }
-        }.getOrNull() ?: run { seen.remove(loc); return }
+        // LOCATION 来自未信任的 SSDP 应答 → 经 fetchLanText 钉定局域网 IP + 限读，防 SSRF/rebinding/DoS。
+        val xml = fetchLanText(loc) ?: run { seen.remove(loc); return }
 
         val renderer = parseRenderer(xml, loc) ?: return
         val u = URL(loc)
