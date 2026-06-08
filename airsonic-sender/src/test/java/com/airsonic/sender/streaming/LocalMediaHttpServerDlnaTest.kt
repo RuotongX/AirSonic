@@ -20,7 +20,9 @@ class LocalMediaHttpServerDlnaTest {
                 sock.getOutputStream().write("GET ${server.path} HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
                 val resp = sock.getInputStream().bufferedReader().readText()
                 assertTrue(resp.contains("transferMode.dlna.org: Streaming"))
-                assertTrue(resp.contains("contentFeatures.dlna.org: DLNA.ORG_OP=01"))
+                // 断言完整值，与 DlnaProtocol.DLNA_CONTENT_FEATURES 一致，防两处静默分叉。
+                assertTrue(resp.contains(
+                    "contentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000"))
             }
         } finally { server.stop() }
     }
