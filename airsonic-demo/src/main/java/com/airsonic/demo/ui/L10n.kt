@@ -79,6 +79,7 @@ data class Strings(
     val downloading: String,       // 下载中 / Downloading
     val updateFailed: String,      // 检查失败 / Check failed
     val openInBrowser: String,     // 在浏览器打开 / Open in browser
+    val dlnaDevice: String,         // DLNA 设备 / DLNA device
 )
 
 private val ZH = Strings(
@@ -110,6 +111,7 @@ private val ZH = Strings(
     checkUpdate = "检查更新", checkUpdateSub = "当前版本", checking = "正在检查…", upToDate = "已是最新版本",
     newVersion = "发现新版本", download = "下载并安装", downloading = "下载中", updateFailed = "检查失败",
     openInBrowser = "在浏览器打开",
+    dlnaDevice = "DLNA 设备",
 )
 
 private val EN = Strings(
@@ -141,6 +143,7 @@ private val EN = Strings(
     checkUpdate = "Check for updates", checkUpdateSub = "Current", checking = "Checking…", upToDate = "Up to date",
     newVersion = "New version", download = "Download & install", downloading = "Downloading", updateFailed = "Check failed",
     openInBrowser = "Open in browser",
+    dlnaDevice = "DLNA device",
 )
 
 object L10n {

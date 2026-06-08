@@ -73,6 +73,7 @@ object CastEngine {
         DeviceType.MAC -> "Mac"
         DeviceType.SONOS -> "Sonos"
         DeviceType.XIAOMI -> if (L10n.lang.value == Lang.EN) "Xiaomi Speaker" else "小米音箱"
+        DeviceType.DLNA -> L10n.s.dlnaDevice
         DeviceType.UNKNOWN -> if (L10n.lang.value == Lang.EN) "AirPlay device" else "AirPlay 设备"
     }
 
