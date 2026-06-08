@@ -404,7 +404,7 @@ private fun DevicePanel(onClose: () -> Unit) {
                 Spacer(Modifier.width(14.dp))
             }
             Text(L10n.s.refresh, color = Aurora.Cyan, fontSize = 13.sp,
-                modifier = Modifier.clickable { CastEngine.stopDiscovery(); CastEngine.startDiscovery(ctx) })
+                modifier = Modifier.clickable { CastEngine.startDiscovery(ctx) })
         }
         Spacer(Modifier.height(8.dp))
         if (visible.isEmpty() && hidden.isEmpty()) {

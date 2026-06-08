@@ -82,13 +82,23 @@ object CastEngine {
         DeviceType.UNKNOWN -> if (L10n.lang.value == Lang.EN) "AirPlay device" else "AirPlay 设备"
     }
 
+    /**
+     * 启动或刷新设备发现。可重复调用（进页面 + 下拉刷新都走这里）。
+     *
+     * 刷新时**不销毁重建** AirPlay 发现，而是复用同一 [AirplayDiscovery] 实例由其内部做
+     * 「干净重启」——这修掉了华为 EMUI 上「刷新后设备全部消失再也回不来」的竞态
+     * （vivo 拆/建快所以一直正常）。
+     */
     fun startDiscovery(context: Context) {
-        if (discovering.value) return
+        val app = context.applicationContext
+        // 首次启动清空列表；刷新时保留现有设备，靠 onServiceFound/Lost 就地合并/剔除，
+        // 避免重启发现期间出现「列表先空、设备再慢慢回填」的空窗。
+        if (discovery == null) devices.clear()
         discovering.value = true
-        devices.clear()
-        val d = AirplayDiscovery(context.applicationContext)
-        discovery = d
-        d.start(object : DeviceListener {
+
+        // AirPlay：复用单一实例；start() 内部对「已在发现中」会发起干净重启。
+        val ap = discovery ?: AirplayDiscovery(app).also { discovery = it }
+        ap.start(object : DeviceListener {
             override fun onDeviceFound(device: AirDevice) {
                 val idx = devices.indexOfFirst { it.id == device.id }
                 if (idx >= 0) devices[idx] = device else devices.add(device)
@@ -102,17 +112,21 @@ object CastEngine {
                 statusLine.value = "${L10n.s.discoverFail}$reason"
             }
         })
-        val dl = DlnaDiscovery(context.applicationContext)
-        dlnaDiscovery = dl
-        dl.start(object : DeviceListener {
-            override fun onDeviceFound(device: AirDevice) {
-                val idx = devices.indexOfFirst { it.id == device.id }
-                if (idx >= 0) devices[idx] = device else devices.add(device)
-                if (selected.value == null && isCastable(device)) selected.value = device
-            }
-            override fun onDeviceLost(device: AirDevice) { devices.removeAll { it.id == device.id } }
-            override fun onDiscoveryFailed(reason: String) { /* DLNA 发现失败不打断 AirPlay */ }
-        })
+
+        // DLNA：SSDP 为一次性 M-SEARCH，重建并重新搜索是安全的（同步关闭，无 NsdManager 那种异步竞态）。
+        runCatching { dlnaDiscovery?.stop() }
+        DlnaDiscovery(app).also { dl ->
+            dlnaDiscovery = dl
+            dl.start(object : DeviceListener {
+                override fun onDeviceFound(device: AirDevice) {
+                    val idx = devices.indexOfFirst { it.id == device.id }
+                    if (idx >= 0) devices[idx] = device else devices.add(device)
+                    if (selected.value == null && isCastable(device)) selected.value = device
+                }
+                override fun onDeviceLost(device: AirDevice) { devices.removeAll { it.id == device.id } }
+                override fun onDiscoveryFailed(reason: String) { /* DLNA 发现失败不打断 AirPlay */ }
+            })
+        }
     }
 
     fun stopDiscovery() {
