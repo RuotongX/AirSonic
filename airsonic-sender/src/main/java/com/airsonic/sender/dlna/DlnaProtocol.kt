@@ -72,3 +72,22 @@ fun soapBody(action: String, paramsXml: String): String =
 fun setAvTransportUriParams(url: String, didl: String): String =
     "<CurrentURI>${escapeXml(url)}</CurrentURI>" +
     "<CurrentURIMetaData><![CDATA[$didl]]></CurrentURIMetaData>"
+
+private fun tag(xml: String, name: String): String? =
+    Regex("<$name>(.*?)</$name>", RegexOption.DOT_MATCHES_ALL).find(xml)?.groupValues?.get(1)
+
+/** 从 GetPositionInfo 响应取 (pos秒, dur秒)；两字段都缺返回 null。 */
+fun parsePositionInfo(xml: String): Pair<Double, Double>? {
+    val rel = tag(xml, "RelTime")
+    val dur = tag(xml, "TrackDuration")
+    if (rel == null && dur == null) return null
+    return hmsToSec(rel ?: "") to hmsToSec(dur ?: "")
+}
+
+/** 若 body 是 SOAP Fault，返回 "errorCode errorDescription"；否则 null。 */
+fun parseSoapError(xml: String): String? {
+    if (!xml.contains("Fault")) return null
+    val code = tag(xml, "errorCode") ?: return null
+    val desc = tag(xml, "errorDescription") ?: ""
+    return "$code $desc".trim()
+}
