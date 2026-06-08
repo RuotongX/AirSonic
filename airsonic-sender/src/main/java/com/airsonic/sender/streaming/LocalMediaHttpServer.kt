@@ -59,6 +59,8 @@ class LocalMediaHttpServer(private val source: RangeSource) {
             sb.append(if (partial) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
             sb.append("Content-Type: ${source.mimeType}\r\n")
             sb.append("Accept-Ranges: bytes\r\n")
+            sb.append("transferMode.dlna.org: Streaming\r\n")
+            sb.append("contentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n")
             sb.append("Content-Length: $len\r\n")
             if (partial) sb.append("Content-Range: bytes $start-$end/$total\r\n")
             sb.append("Connection: close\r\n\r\n")
