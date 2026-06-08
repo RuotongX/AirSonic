@@ -34,10 +34,25 @@ fun ssdpLocation(packet: String): String? {
 fun resolveUrl(base: String, ref: String): String =
     runCatching { URI(base).resolve(ref).toString() }.getOrDefault(ref)
 
+/** 设备描述 XML 上限：UPnP 描述很小，超过即拒（防超大恶意输入）。 */
+private const val MAX_DESC_BYTES = 512 * 1024
+
 /** 解析设备描述 XML：必须含 AVTransport:1 服务，返回 friendlyName + 绝对 controlURL。 */
 fun parseRenderer(xml: String, locationUrl: String): DlnaRenderer? {
+    if (xml.length > MAX_DESC_BYTES) return null
     val doc = runCatching {
-        val f = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = false }
+        // 描述来自局域网未信任设备 → 防 XXE：禁 DOCTYPE/外部实体（disallow-doctype-decl 即可挡住三种变体，其余为纵深防御）。
+        val f = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = false
+            for ((feature, on) in listOf(
+                "http://apache.org/xml/features/disallow-doctype-decl" to true,
+                "http://xml.org/sax/features/external-general-entities" to false,
+                "http://xml.org/sax/features/external-parameter-entities" to false,
+                "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
+            )) runCatching { setFeature(feature, on) }
+            runCatching { isXIncludeAware = false }
+            runCatching { isExpandEntityReferences = false }
+        }
         f.newDocumentBuilder().parse(InputSource(StringReader(xml)))
     }.getOrNull() ?: return null
 

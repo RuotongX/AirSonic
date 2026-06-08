@@ -54,4 +54,13 @@ class SsdpParsingTest {
             "<controlURL>/c</controlURL></service></serviceList></device></root>"
         assertNull(parseRenderer(xml, "http://h:1/d.xml"))
     }
+
+    @Test fun rejectsXmlWithDoctypeXxe() {
+        // 防 XXE：含 DOCTYPE 的描述（来自未信任局域网设备）必须被拒，返回 null。
+        val xml = "<?xml version=\"1.0\"?><!DOCTYPE root [<!ENTITY x \"pwn\">]>" +
+            "<root><device><friendlyName>X</friendlyName><serviceList><service>" +
+            "<serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>" +
+            "<controlURL>/c</controlURL></service></serviceList></device></root>"
+        assertNull(parseRenderer(xml, "http://h:1/d.xml"))
+    }
 }
