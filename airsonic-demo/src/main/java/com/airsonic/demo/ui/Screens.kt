@@ -1,9 +1,12 @@
 package com.airsonic.demo.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -644,6 +647,13 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         }
         Spacer(Modifier.height(12.dp))
         ProtocolsCard()
+        SettingRow(Icons.Rounded.Cast, s.screenMirrorTitle, s.screenMirrorSub) {
+            // 方案1：DLNA 投不了屏幕镜像 → 直接调起系统无线投屏(Miracast)，挑食机型降级到无线设置。
+            val opened = listOf("android.settings.CAST_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS).any { action ->
+                runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+            }
+            if (!opened) Toast.makeText(ctx, s.castSettingsUnavailable, Toast.LENGTH_SHORT).show()
+        }
         SettingRow(Icons.Rounded.ScreenShare, s.howTitle, s.howSub)
         UpdateRow()
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)

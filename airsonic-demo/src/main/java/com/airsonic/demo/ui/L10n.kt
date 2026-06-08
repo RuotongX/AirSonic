@@ -87,6 +87,9 @@ data class Strings(
     val protoDlnaSub: String,       // 智能电视 · 盒子 · Kodi
     val tagAudio: String,           // 音频 / Audio
     val tagVideoAudio: String,      // 视频+音频 / Video+Audio
+    val screenMirrorTitle: String,  // 屏幕镜像 / Screen mirroring
+    val screenMirrorSub: String,    // 调起系统无线投屏…
+    val castSettingsUnavailable: String, // 未找到系统投屏设置
 )
 
 private val ZH = Strings(
@@ -123,6 +126,8 @@ private val ZH = Strings(
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · 音箱 · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "智能电视 · 盒子 · Kodi",
     tagAudio = "音频", tagVideoAudio = "视频+音频",
+    screenMirrorTitle = "屏幕镜像", screenMirrorSub = "调起系统无线投屏，镜像整个屏幕到电视(Miracast)",
+    castSettingsUnavailable = "本机未提供系统投屏设置",
 )
 
 private val EN = Strings(
@@ -159,6 +164,8 @@ private val EN = Strings(
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · Speakers · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "Smart TV · Box · Kodi",
     tagAudio = "Audio", tagVideoAudio = "Video+Audio",
+    screenMirrorTitle = "Screen mirroring", screenMirrorSub = "Open system wireless display to mirror your screen to a TV (Miracast)",
+    castSettingsUnavailable = "System cast settings not available on this device",
 )
 
 object L10n {
