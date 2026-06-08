@@ -1,18 +1,21 @@
 # AirSonic
 
-> An Android app that casts audio (and works toward video) to AirPlay receivers — HomePod, Apple TV, AirPlay speakers — implemented from scratch, with no commercial SDK.
+> A from-scratch Android casting app — sends audio & video to **AirPlay** (HomePod, Apple TV, AirPlay speakers) **and DLNA/UPnP** receivers (smart TVs, boxes, Kodi). No commercial SDK.
 
-AirSonic 是一个纯自研的 Android 投送 app：自己实现 AirPlay 设备发现、HomeKit/AirPlay2 配对、加密音频流，配上一套「深空极光 / Aurora」风格的 Jetpack Compose 界面。
+AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链路 —— **AirPlay**（设备发现 / HomeKit-AirPlay2 配对 / 加密音频流）与 **DLNA/UPnP**（SSDP 发现 / SOAP 控制），配上一套「深空极光 / Aurora」风格的 Jetpack Compose 界面。
 
 ## ✨ 功能
 
-- **设备发现**：mDNS 实时发现局域网内的 AirPlay 接收器。
-- **音频投送**：向 HomePod / AirPlay 音箱投送本地音频（ALAC / PCM 自动选择）。
-- **AirPlay2 配对**：完整 HomeKit M1–M6 + pair-verify（X25519 / HKDF / ChaCha20-Poly1305）。
+- **双协议投送**：AirPlay 与 DLNA/UPnP 设备出现在**同一个设备列表**里，按图标/标签区分，用户无感。
+- **AirPlay 音频**：向 HomePod / AirPlay 音箱投送本地音频（ALAC / PCM 自动选择）；完整 HomeKit M1–M6 + pair-verify（X25519 / HKDF / ChaCha20-Poly1305）。
+- **DLNA 视频 + 音频**：向智能电视 / 盒子 / Kodi 等 MediaRenderer 投送本地视频/音频，支持播放/暂停/拖动/停止 + 进度（AVTransport SOAP）。
+- **设备发现**：mDNS（AirPlay `_airplay._tcp`）+ SSDP（DLNA `MediaRenderer`）实时发现局域网设备。
 - **设备管理**：每台设备可重命名、永久隐藏 / 取消隐藏（本地持久化）。
 - **本地媒体浏览器**：app 内浏览本机音视频并投送。
 - **中英文界面**：设置页一键切换。
 - **应用内更新**：设置页「检查更新」直接从 GitHub Releases 拉取新版并安装（见下）。
+
+> **安全**：DLNA 设备描述 / controlUrl / LOCATION 均来自未信任的局域网设备，已做统一防护 —— 仅 http(s)+RFC1918 内网地址、解析一次钉死 IP（防 SSRF / DNS rebinding）、限读 512KB（防 DoS）、解析禁 DOCTYPE（防 XXE）。
 
 ## 🧱 工程结构
 
@@ -21,17 +24,20 @@ AirSonic/
 ├── airsonic-sender/   # 核心库：设备发现 / 配对 / 加密 / 流式
 │   └── src/main/java/com/airsonic/sender/
 │       ├── api/         # 对外模型与接口（AirDevice / AirSonicClient）
-│       ├── discovery/   # mDNS 发现（NsdManager + MulticastLock）
+│       ├── discovery/   # AirplayDiscovery（mDNS）+ DlnaDiscovery（SSDP）+ SsdpParsing
 │       ├── pairing/     # AirPlay2 配对：TLV8 / X25519 / HKDF / ChaCha20 / 握手
-│       └── streaming/   # RTP 音频、加密通道、视频会话控制
+│       ├── dlna/        # DLNA：DlnaProtocol（SOAP/DIDL 纯函数）/ DlnaController / LanHttp（安全访问）
+│       └── streaming/   # RTP 音频、加密通道、视频会话控制、LocalMediaHttpServer
 └── airsonic-demo/     # 产品 app（Compose / Aurora UI）
     └── src/main/java/com/airsonic/demo/ui/
         ├── StudioActivity   # 入口
         ├── Screens.kt       # 主页 / 媒体 / 设置等界面
-        ├── CastEngine.kt    # 投送编排
+        ├── CastEngine.kt    # 投送编排（合并 AirPlay + DLNA 发现与投送）
         ├── Updater.kt       # GitHub Releases 在线更新
         └── DevicePrefs.kt   # 每设备持久化设置
 ```
+
+DLNA 的协议逻辑（SOAP 信封 / DIDL-Lite / SSDP 与设备描述解析 / 时间互转 / URL 安全校验）都拆成**无 Android 依赖的纯函数**，桌面 JVM 全覆盖单测；网络类（`DlnaController` / `DlnaDiscovery`）只是薄壳。
 
 ## 🔄 应用内更新（GitHub Releases 驱动）
 
@@ -76,6 +82,13 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 | Compose | BOM 2023.06.01 |
 | 加密库 | BouncyCastle 1.76 |
 
+## 📺 支持的接收设备
+
+| 协议 | 设备 | 内容 |
+|------|------|------|
+| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱、Apple TV、Mac | 音频（视频投 Apple TV 仍在攻坚） |
+| DLNA / UPnP | 智能电视、电视盒子、Kodi、PC 软渲染器 | 视频 + 音频 |
+
 ## ⚠️ 说明
 
-本项目为学习 / 研究 AirPlay 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码。仅供个人学习与互操作研究使用。
+本项目为学习 / 研究 AirPlay 与 DLNA/UPnP 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码（DLNA 为开放标准）。仅供个人学习与互操作研究使用。
