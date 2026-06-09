@@ -22,7 +22,7 @@ fun isSonosDescription(xml: String): Boolean =
 fun buildLiveAudioDidl(title: String, url: String): String {
     val t = escapeXml(title)
     val u = escapeXml(url)
-    val pInfo = "http-get:*:audio/aac:DLNA.ORG_OP=00;DLNA.ORG_FLAGS=0c700000000000000000000000000000"
+    val pInfo = "http-get:*:audio/aac:*"
     return """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" """ +
         """xmlns:dc="http://purl.org/dc/elements/1.1/" """ +
         """xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">""" +

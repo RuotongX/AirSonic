@@ -4,6 +4,7 @@
 
 package com.airsonic.sender.streaming
 
+import android.util.Log
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -58,6 +59,7 @@ class LiveAudioHttpServer {
             val reqLine = readLine(ins)
             val reqPath = reqLine.split(" ").getOrNull(1) ?: ""
             while (true) { val l = readLine(ins); if (l.isEmpty()) break }
+            Log.i("LiveAudioHttp", "client GET $reqPath (match=${reqPath == path})")
             if (reqPath != path) {
                 out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                 out.flush(); return
@@ -71,12 +73,16 @@ class LiveAudioHttpServer {
             out.flush()
             val q = LinkedBlockingQueue<ByteArray>(QUEUE_MAX)
             subscribers[sock] = q
+            Log.i("LiveAudioHttp", "streaming started for $reqPath")
             try {
                 while (running && !sock.isClosed) {
                     val frame = q.poll(1, java.util.concurrent.TimeUnit.SECONDS) ?: continue
                     out.write(frame); out.flush()
                 }
-            } finally { subscribers.remove(sock) }
+            } finally {
+                subscribers.remove(sock)
+                Log.i("LiveAudioHttp", "streaming ended for $reqPath (subscriber removed)")
+            }
         }
     }
 

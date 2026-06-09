@@ -28,7 +28,7 @@ class SonosTest {
         val didl = buildLiveAudioDidl("AirSonic Live", "http://10.0.0.2:9000/live.aac")
         assertTrue(didl.contains("http://10.0.0.2:9000/live.aac"))
         assertTrue(didl.contains("audio/aac"))
-        assertTrue(didl.contains("DLNA.ORG_OP=00"))                 // 不可 seek
+        assertTrue(didl.contains("http-get:*:audio/aac:*"))        // 最兼容裸 protocolInfo
         assertTrue(didl.contains("object.item.audioItem.audioBroadcast"))
     }
 }

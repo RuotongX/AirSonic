@@ -76,6 +76,7 @@ object CastEngine {
     private var httpServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
     private var dlnaDiscovery: DlnaDiscovery? = null
+    private val probedSonosHosts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var dlnaCtl: DlnaController? = null
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
@@ -127,7 +128,7 @@ object CastEngine {
                 // 自动选中第一台可投设备（若尚未选）
                 if (selected.value == null && isCastable(device)) selected.value = device
                 // 异步识别 Sonos：是则升级类型 + 控制地址（用于走 UPnP 流路径）
-                if (device.type != DeviceType.SONOS && device.host.isNotEmpty()) {
+                if (device.type != DeviceType.SONOS && device.host.isNotEmpty() && probedSonosHosts.add(device.host)) {
                     thread(isDaemon = true) {
                         val ctl = com.airsonic.sender.dlna.probeSonos(device.host) ?: return@thread
                         val cur = devices.indexOfFirst { it.id == device.id }
@@ -332,7 +333,8 @@ object CastEngine {
             val ctl = DlnaController(controlUrl); dlnaCtl = ctl
             if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return }
             if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return }
-            mutePhone(app)
+            // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
+            // 把 STREAM_MUSIC 压到 0 会在 EMUI/华为上把被捕获的 App 一起静掉。
             onCastingStarted(device.name)
             // 捕获 → 编码 → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
             while (casting) {
