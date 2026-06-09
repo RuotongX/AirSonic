@@ -88,6 +88,10 @@ fun parsePositionInfo(xml: String): Pair<Double, Double>? {
     return hmsToSec(rel ?: "") to hmsToSec(dur ?: "")
 }
 
+/** 从 GetTransportInfo 响应解析 CurrentTransportState（PLAYING/STOPPED/TRANSITIONING/NO_MEDIA_PRESENT...）。失败 null。 */
+fun parseTransportState(xml: String): String? =
+    Regex("<CurrentTransportState>([^<]*)</CurrentTransportState>").find(xml)?.groupValues?.get(1)?.trim()?.ifEmpty { null }
+
 /** 若 body 是 SOAP Fault，返回 "errorCode errorDescription"；否则 null。 */
 fun parseSoapError(xml: String): String? {
     if (!xml.contains("Fault")) return null

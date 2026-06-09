@@ -34,6 +34,12 @@ class DlnaController(private val controlUrl: String) {
         return parsePositionInfo(body)
     }
 
+    /** AVTransport 当前传输状态（PLAYING/STOPPED/...）；失败 null。 */
+    fun getTransportInfo(): String? {
+        val body = action("GetTransportInfo", "") ?: return null
+        return parseTransportState(body)
+    }
+
     /** 发一个 SOAP 动作；成功返回响应 body，失败返回 null 并写 lastError。 */
     private fun action(name: String, paramsXml: String): String? {
         val pin = pinned ?: run { lastError = "rejected non-LAN controlUrl"; return null }

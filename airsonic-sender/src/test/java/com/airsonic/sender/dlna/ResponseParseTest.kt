@@ -39,4 +39,12 @@ class ResponseParseTest {
     @Test fun soapErrorNullWhenNoFault() {
         assertNull(parseSoapError("<ok/>"))
     }
+
+    @Test fun transportStateExtractsPlaying() {
+        assertEquals("PLAYING", parseTransportState("<CurrentTransportState>PLAYING</CurrentTransportState>"))
+    }
+
+    @Test fun transportStateNullWhenNoTag() {
+        assertNull(parseTransportState("<s:Envelope><s:Body/></s:Envelope>"))
+    }
 }

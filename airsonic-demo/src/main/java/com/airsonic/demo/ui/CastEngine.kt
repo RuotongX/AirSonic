@@ -322,7 +322,7 @@ object CastEngine {
         try {
             val server = com.airsonic.sender.streaming.LiveAudioHttpServer()
             val port = server.start(); live = server
-            val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return }
+            val localIp = localIpForTarget(device.host) ?: run { fail("${L10n.s.castError}no ip"); return }
             val url = "http://$localIp:$port${server.path}"
             val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
                 sampleRate = 44100, channels = 2
@@ -333,15 +333,23 @@ object CastEngine {
             val ctl = DlnaController(controlUrl); dlnaCtl = ctl
             if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return }
             if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return }
+            // 把流地址记一处（诊断：确认下发给 Sonos 的拉流 URL 与本机网段）。
+            statusLine.value = "流: http://$localIp:$port${server.path}"
             // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
             // 把 STREAM_MUSIC 压到 0 会在 EMUI/华为上把被捕获的 App 一起静掉。
             onCastingStarted(device.name)
             // 捕获 → 编码 → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
+            var diagTick = 0          // 每 ~50 帧(约1s)刷新一次诊断；getTransportInfo 是网络调用，不能逐帧打
             while (casting) {
                 val pcm = cc.readChunk(4096) ?: break
                 if (pcm.isEmpty()) continue
                 level.value = peakOf(pcm)
                 encoder.encode(pcm)
+                if (++diagTick >= 50) {
+                    diagTick = 0
+                    // getTransportInfo 失败返回 null（不阻断循环）；连接数=Sonos 是否真来取流。
+                    activeCodec.value = "AAC｜S:${ctl.getTransportInfo() ?: "?"}｜流x${server.connections}｜$localIp:$port"
+                }
             }
         } catch (t: Throwable) {
             fail("${L10n.s.castError}${t.message}")
@@ -411,6 +419,22 @@ object CastEngine {
             .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address && it.hostAddress?.startsWith("169.254") == false }
             ?.hostAddress
     }.getOrNull()
+
+    /** 优先返回与 target 同 /24 网段的本机 IPv4（避免华为多网卡选错）；否则回退 localWifiIp()。 */
+    private fun localIpForTarget(target: String): String? {
+        val prefix = target.substringBeforeLast('.', "")
+        if (prefix.isNotEmpty()) {
+            val match = runCatching {
+                java.net.NetworkInterface.getNetworkInterfaces().toList()
+                    .flatMap { it.inetAddresses.toList() }
+                    .firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress &&
+                        it.hostAddress?.startsWith("$prefix.") == true }
+                    ?.hostAddress
+            }.getOrNull()
+            if (match != null) return match
+        }
+        return localWifiIp()
+    }
 
     private fun videoCleanup() {
         casting = false

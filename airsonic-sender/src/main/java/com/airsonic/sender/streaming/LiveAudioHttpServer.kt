@@ -23,6 +23,8 @@ class LiveAudioHttpServer {
     @Volatile private var running = false
     private val subscribers = ConcurrentHashMap<Socket, LinkedBlockingQueue<ByteArray>>()
     private val QUEUE_MAX = 256   // 约 256 帧 ≈ 6s@44.1k/1024spf，超出丢旧
+    /** 累计被客户端成功 GET 拉流的次数（诊断用：判断 Sonos 是否真的来取流）。 */
+    @Volatile var connections = 0; private set
 
     fun start(): Int {
         val s = ServerSocket(0, 8, InetAddress.getByName("0.0.0.0"))
@@ -71,6 +73,7 @@ class LiveAudioHttpServer {
                  "Connection: close\r\n\r\n").toByteArray()
             )
             out.flush()
+            connections++
             val q = LinkedBlockingQueue<ByteArray>(QUEUE_MAX)
             subscribers[sock] = q
             Log.i("LiveAudioHttp", "streaming started for $reqPath")
