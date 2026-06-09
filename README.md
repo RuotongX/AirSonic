@@ -89,6 +89,18 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 | AirPlay / AirPlay 2 | HomePod、AirPlay 音箱、Apple TV、Mac | 音频（视频投 Apple TV 仍在攻坚） |
 | DLNA / UPnP | 智能电视、电视盒子、Kodi、PC 软渲染器 | 视频 + 音频 |
 
+## 📄 授权 / License
+
+本项目采用 **[PolyForm Noncommercial License 1.0.0](LICENSE)**（非商业许可证）：
+
+- ✅ **个人 / 学习 / 研究 / 业余 / 非营利 / 教育 / 政府**等任何**非商业**用途——**免费授权**。
+- ⛔ **任何商业用途，须事先获得作者书面同意**（单独的商业许可）。
+
+> **商用请先联系作者获取授权：chunguangwee@gmail.com**
+> Commercial use requires the author's prior written consent — contact **chunguangwee@gmail.com**.
+
+完整条款见 [`LICENSE`](LICENSE)。
+
 ## ⚠️ 说明
 
-本项目为学习 / 研究 AirPlay 与 DLNA/UPnP 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码（DLNA 为开放标准）。仅供个人学习与互操作研究使用。
+本项目为学习 / 研究 AirPlay 与 DLNA/UPnP 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码（DLNA 为开放标准）。
