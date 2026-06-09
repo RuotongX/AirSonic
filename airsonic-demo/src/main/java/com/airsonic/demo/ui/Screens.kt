@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Movie
@@ -58,6 +59,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.ui.graphics.Color
@@ -565,7 +567,14 @@ private fun CastZone() {
     when (phase) {
         CastPhase.CASTING ->
             if (CastEngine.isVideo.value) VideoControlBar(name)
-            else CastingBar(name, started, level) { CastEngine.stop() }
+            else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CastingBar(name, started, level) { CastEngine.stop() }
+                val codec = CastEngine.activeCodec.value
+                if (codec.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("${L10n.s.codecLabel} $codec", color = Aurora.TextDim, fontSize = 11.sp)
+                }
+            }
         CastPhase.CONNECTING -> Text(status, color = Aurora.Cyan, fontSize = 14.sp)
         CastPhase.ERROR -> Text(status, color = Aurora.Magenta, fontSize = 14.sp)
         CastPhase.IDLE -> if (status.isNotEmpty()) Text(status, color = Aurora.TextDim, fontSize = 13.sp)
@@ -649,6 +658,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         Spacer(Modifier.height(12.dp))
         SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
         SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
+        ForceAlacRow()
         UpdateRow()
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
         Spacer(Modifier.height(16.dp))
@@ -659,6 +669,31 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
+}
+
+/** 「强制 ALAC」开关行：Sonos 等只收 ALAC 的设备打开；持久化，HomePod 不受影响。 */
+@Composable
+private fun ForceAlacRow() {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    val on = CastEngine.forceAlac.value
+    Row(
+        Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.GraphicEq, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(s.forceAlacTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(s.forceAlacSub, color = Aurora.TextDim, fontSize = 12.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        Switch(checked = on, onCheckedChange = { CastEngine.setForceAlac(ctx, it) })
+    }
+    Spacer(Modifier.height(12.dp))
 }
 
 /** 在线更新行：点一下查 GitHub Releases；查到新版再点即下载并拉起安装器。 */

@@ -42,6 +42,7 @@ class StudioActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         L10n.load(this)   // 载入已保存语言
+        CastEngine.loadPrefs(this)   // 载入「强制 ALAC」等开关
         projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         val actions = CastActions(

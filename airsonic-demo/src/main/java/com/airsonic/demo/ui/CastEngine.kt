@@ -46,6 +46,24 @@ object CastEngine {
     /** 投送开始时刻（SystemClock.elapsedRealtime）；0=未投。用于时长计时。 */
     val startedAt = mutableStateOf(0L)
 
+    /** 强制使用 ALAC 编码（Sonos 等只收 ALAC 的设备调试用；持久化）。HomePod 走自动探测不受影响。 */
+    val forceAlac = mutableStateOf(false)
+    /** 当前会话实际使用的音频编码标签（"ALAC"/"PCM"），供 UI 调试显示。 */
+    val activeCodec = mutableStateOf("")
+
+    private const val PREFS = "airsonic_prefs"
+
+    fun loadPrefs(context: Context) {
+        forceAlac.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean("force_alac", false)
+    }
+
+    fun setForceAlac(context: Context, v: Boolean) {
+        forceAlac.value = v
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("force_alac", v).apply()
+    }
+
     private var discovery: AirplayDiscovery? = null
     @Volatile private var casting = false
     private var capture: SystemAudioCapture? = null
@@ -449,9 +467,13 @@ object CastEngine {
             val hs = pairFor(app, device) ?: return null
             val session = AirplayStreamSession(device.host, hs)
             val result = session.setup(useAlac = useAlac) {} ?: return null
+            activeCodec.value = if (useAlac) "ALAC" else "PCM"
             return session to result
         }
-        return attempt(probe.requiresAlac) ?: attempt(!probe.requiresAlac)
+        // 「强制 ALAC」开关优先；否则用 GET /info 自动探测结果。SETUP 对 PCM/ALAC 都会成功，
+        // 故回退仅在 SETUP 真失败时触发。Sonos 等只收 ALAC 的设备需开开关或探测命中。
+        val preferAlac = forceAlac.value || probe.requiresAlac
+        return attempt(preferAlac) ?: attempt(!preferAlac)
     }
 
     private fun peakOf(pcm: ByteArray): Float {

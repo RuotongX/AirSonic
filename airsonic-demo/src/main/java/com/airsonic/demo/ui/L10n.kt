@@ -92,6 +92,9 @@ data class Strings(
     val screenMirrorTitle: String,  // 屏幕镜像 / Screen mirroring
     val screenMirrorSub: String,    // 调起系统无线投屏…
     val castSettingsUnavailable: String, // 未找到系统投屏设置
+    val forceAlacTitle: String,     // 强制 ALAC 编码
+    val forceAlacSub: String,       // Sonos 等只收 ALAC 的设备…
+    val codecLabel: String,         // 编码 / Codec（投送时显示当前编码）
 )
 
 private val ZH = Strings(
@@ -110,7 +113,7 @@ private val ZH = Strings(
     supportTitle = "支持设备", supportSub = "支持 AirPlay 协议的设备",
     howTitle = "投送说明", howSub = "投送时手机媒体音量自动压低，仅 AirPlay 设备出声",
     debugTitle = "调试 · 验证点", debugSub = "开发者调试入口",
-    version = "AirSonic · 版本 0.2.4", language = "语言",
+    version = "AirSonic · 版本 0.2.5", language = "语言",
     back = "返回", device = "设备",
     castingTo = "正在投送 ·", stop = "停止投送",
     connecting = "正在连接", stopped = "已停止", playFinished = "播放完成",
@@ -130,6 +133,9 @@ private val ZH = Strings(
     tagAudio = "音频", tagVideoAudio = "视频+音频",
     screenMirrorTitle = "屏幕镜像", screenMirrorSub = "调起系统无线投屏，镜像整个屏幕到电视(Miracast)",
     castSettingsUnavailable = "本机未提供系统投屏设置",
+    forceAlacTitle = "强制 ALAC 编码",
+    forceAlacSub = "Sonos 等只收 ALAC 的设备打开;HomePod 走自动探测不受影响",
+    codecLabel = "编码",
 )
 
 private val EN = Strings(
@@ -148,7 +154,7 @@ private val EN = Strings(
     supportTitle = "Supported devices", supportSub = "Any AirPlay-compatible device",
     howTitle = "How it works", howSub = "Phone media volume is lowered while casting; sound plays on the AirPlay device only",
     debugTitle = "Debug · Test points", debugSub = "Developer entry",
-    version = "AirSonic · Version 0.2.4", language = "Language",
+    version = "AirSonic · Version 0.2.5", language = "Language",
     back = "Back", device = "Device",
     castingTo = "Casting ·", stop = "Stop casting",
     connecting = "Connecting to", stopped = "Stopped", playFinished = "Playback finished",
@@ -168,6 +174,9 @@ private val EN = Strings(
     tagAudio = "Audio", tagVideoAudio = "Video+Audio",
     screenMirrorTitle = "Screen mirroring", screenMirrorSub = "Open system wireless display to mirror your screen to a TV (Miracast)",
     castSettingsUnavailable = "System cast settings not available on this device",
+    forceAlacTitle = "Force ALAC",
+    forceAlacSub = "Enable for Sonos-type devices that only accept ALAC; HomePod uses auto-detect and is unaffected",
+    codecLabel = "Codec",
 )
 
 object L10n {
