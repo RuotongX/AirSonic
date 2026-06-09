@@ -126,6 +126,16 @@ object CastEngine {
                 if (idx >= 0) devices[idx] = device else devices.add(device)
                 // 自动选中第一台可投设备（若尚未选）
                 if (selected.value == null && isCastable(device)) selected.value = device
+                // 异步识别 Sonos：是则升级类型 + 控制地址（用于走 UPnP 流路径）
+                if (device.type != DeviceType.SONOS && device.host.isNotEmpty()) {
+                    thread(isDaemon = true) {
+                        val ctl = com.airsonic.sender.dlna.probeSonos(device.host) ?: return@thread
+                        val cur = devices.indexOfFirst { it.id == device.id }
+                        if (cur >= 0) devices[cur] = devices[cur].copy(
+                            type = DeviceType.SONOS, controlUrl = ctl
+                        )
+                    }
+                }
             }
             override fun onDeviceLost(device: AirDevice) {
                 devices.removeAll { it.id == device.id }
