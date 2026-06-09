@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Chunguang Wei (https://github.com/chunguangwei)
+// Licensed under the PolyForm Noncommercial License 1.0.0 — noncommercial use only.
+// Commercial use requires prior written consent: chunguangwee@gmail.com. See LICENSE.
+
 package com.airsonic.sender.streaming
 
 /** 解析 HTTP Range 头，返回闭区间 [start,end]（含），无头则全量，非法返回 null。 */
