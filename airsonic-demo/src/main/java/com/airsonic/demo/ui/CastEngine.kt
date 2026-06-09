@@ -190,6 +190,11 @@ object CastEngine {
                 val cc = SystemAudioCapture(); cap = cc
                 if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
                 capture = cc
+                // Sonos：走 UPnP 实时 AAC 流（不进 AirPlay）
+                if (device.type == DeviceType.SONOS && device.controlUrl != null) {
+                    startSonosAudioStream(app, cc, device)
+                    return@thread
+                }
                 val (session, result) = connect(app, device)
                     ?: run { fail(L10n.s.setupFail); return@thread }
                 mutePhone(app)
@@ -305,6 +310,43 @@ object CastEngine {
             } finally {
                 dlnaCleanup()
             }
+        }
+    }
+
+    /** Sonos：捕获 PCM → AAC 实时流 → LiveAudioHttpServer → UPnP SetAVTransportURI+Play。 */
+    private fun startSonosAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice) {
+        val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
+        var live: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
+        var enc: com.airsonic.sender.streaming.AacStreamEncoder? = null
+        try {
+            val server = com.airsonic.sender.streaming.LiveAudioHttpServer()
+            val port = server.start(); live = server
+            val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return }
+            val url = "http://$localIp:$port${server.path}"
+            val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
+                sampleRate = 44100, channels = 2
+            ) { frame -> server.push(frame) }
+            encoder.start(); enc = encoder
+
+            val didl = com.airsonic.sender.dlna.buildLiveAudioDidl(device.name, url)
+            val ctl = DlnaController(controlUrl); dlnaCtl = ctl
+            if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return }
+            if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return }
+            mutePhone(app)
+            onCastingStarted(device.name)
+            // 捕获 → 编码 → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
+            while (casting) {
+                val pcm = cc.readChunk(4096) ?: break
+                if (pcm.isEmpty()) continue
+                level.value = peakOf(pcm)
+                encoder.encode(pcm)
+            }
+        } catch (t: Throwable) {
+            fail("${L10n.s.castError}${t.message}")
+        } finally {
+            runCatching { dlnaCtl?.stop() }; dlnaCtl = null
+            runCatching { enc?.stop() }
+            runCatching { live?.stop() }
         }
     }
 
