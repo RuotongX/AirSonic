@@ -374,6 +374,7 @@ object CastEngine {
         var live: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
         var enc: com.airsonic.sender.streaming.AacStreamEncoder? = null
         var ctl: DlnaController? = null
+        val pumpStop = java.util.concurrent.atomic.AtomicBoolean(false)
         try {
             val server = if (wav)
                 com.airsonic.sender.streaming.LiveAudioHttpServer(
@@ -406,11 +407,17 @@ object CastEngine {
             // 故先起捕获→(编码)→推流线程，让流产出数据，再 play()。
             val fmtLabel = if (wav) "WAV" else "AAC"
             val pump = thread(isDaemon = true, name = "airsonic-sonos-pump") {
-                while (casting && gen == sessionGen) {
-                    val pcm = cc.readChunk(4096) ?: break
-                    if (pcm.isEmpty()) continue
-                    level.value = peakOf(pcm)
-                    if (wav) server.push(pcm) else enc?.encode(pcm)
+                // 整体 try/catch：play 失败路径 finally 会先停编码器，pump 撞上已释放的
+                // MediaCodec 会抛 IllegalStateException——线程级未捕获异常会崩整个 app。
+                try {
+                    while (!pumpStop.get() && casting && gen == sessionGen) {
+                        val pcm = cc.readChunk(4096) ?: break
+                        if (pcm.isEmpty()) continue
+                        level.value = peakOf(pcm)
+                        if (wav) server.push(pcm) else enc?.encode(pcm)
+                    }
+                } catch (t: Throwable) {
+                    android.util.Log.w("CastEngine", "sonos pump exit: ${t.javaClass.simpleName}:${t.message}")
                 }
             }
             Thread.sleep(500)   // 让编码器先产几帧，Sonos 一连流即有数据可拉
@@ -430,6 +437,7 @@ object CastEngine {
         } catch (t: Throwable) {
             fail("${L10n.s.castError}${t.message}", gen)
         } finally {
+            pumpStop.set(true)   // 先叫停 pump，再停编码器/服务，缩小 encode-after-release 竞窗
             runCatching { ctl?.stop() }
             if (dlnaCtl === ctl) dlnaCtl = null   // 只清自己这代的控制器，别动新会话的
             runCatching { enc?.stop() }
