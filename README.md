@@ -101,6 +101,13 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 
 完整条款见 [`LICENSE`](LICENSE)。
 
+### 用户协议与隐私政策
+
+- 📜 [用户协议 / Terms of Use](TERMS.md)
+- 🔒 [隐私政策 / Privacy Policy](PRIVACY.md)
+
+**隐私要点：AirSonic 没有服务器，不收集、不上传任何个人数据；所有媒体内容与控制指令只在你的局域网内传输。** 唯一的对外请求是可选的"检查更新"（读取 GitHub 公开 Release 信息）。应用设置页内也可直接查看以上两份文件。
+
 ## ⚠️ 说明
 
 本项目为学习 / 研究 AirPlay 与 DLNA/UPnP 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码（DLNA 为开放标准）。

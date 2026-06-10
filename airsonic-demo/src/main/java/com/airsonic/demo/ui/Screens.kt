@@ -44,6 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -152,6 +153,7 @@ fun AppNav(actions: CastActions) {
             composable("video") { MediaListScreen(nav, isVideo = true) }
             composable("settings") { SettingsScreen(nav, actions) }
             composable("protocols") { ProtocolsScreen(nav) }
+            composable("legal") { LegalScreen(nav) }
         }
         PinDialogHost()
     }
@@ -661,6 +663,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         }
         Spacer(Modifier.height(12.dp))
         SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
+        SettingRow(Icons.Rounded.Shield, s.legalTitle, s.legalSub) { nav.navigate("legal") }
         SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
         ForceAlacRow()
         SonosWavRow()
@@ -825,6 +828,44 @@ fun ProtocolsScreen(nav: NavHostController) {
                 launchSystemCast(ctx)
             }
         }
+    }
+}
+
+private const val TERMS_URL = "https://github.com/chunguangwei/AirSonic/blob/main/TERMS.md"
+private const val PRIVACY_URL = "https://github.com/chunguangwei/AirSonic/blob/main/PRIVACY.md"
+
+/** 用户协议 + 隐私政策：应用内可离线阅读的摘要 + 跳 GitHub 看完整条款。 */
+@Composable
+fun LegalScreen(nav: NavHostController) {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    ScreenScaffold(nav, s.legalTitle) {
+        LegalCard(s.termsHeading, s.termsBody, s.viewFullOnGitHub) { openUrl(ctx, TERMS_URL) }
+        Spacer(Modifier.height(12.dp))
+        LegalCard(s.privacyHeading, s.privacyBody, s.viewFullOnGitHub) { openUrl(ctx, PRIVACY_URL) }
+    }
+}
+
+@Composable
+private fun LegalCard(heading: String, body: String, linkLabel: String, onOpen: () -> Unit) {
+    Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+        Text(heading, color = Aurora.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text(body, color = Aurora.TextSecondary, fontSize = 13.sp, lineHeight = 20.sp)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            linkLabel, color = Aurora.Cyan, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.clickable { onOpen() },
+        )
+    }
+}
+
+/** 用系统浏览器打开 URL；失败静默（无网/无浏览器不崩）。 */
+private fun openUrl(ctx: android.content.Context, url: String) {
+    runCatching {
+        ctx.startActivity(
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }
 
