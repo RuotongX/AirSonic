@@ -55,6 +55,7 @@ fun fetchLanText(
         val conn = (pin.url.openConnection() as HttpURLConnection).apply {
             connectTimeout = connectTimeoutMs
             readTimeout = readTimeoutMs
+            instanceFollowRedirects = false   // pinLanUrl 只钉首跳；恶意设备的 302 会被 JDK 自动跟随旁路防护
             setRequestProperty("Host", pin.hostHeader)
         }
         try {

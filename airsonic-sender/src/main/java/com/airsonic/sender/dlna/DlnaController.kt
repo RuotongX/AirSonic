@@ -48,6 +48,7 @@ class DlnaController(private val controlUrl: String) {
                 requestMethod = "POST"
                 connectTimeout = 3000
                 readTimeout = 5000
+                instanceFollowRedirects = false   // UPnP 控制无重定向；禁止 JDK 跟随，闭合 pinLanUrl 的 SSRF 残口
                 doOutput = true
                 setRequestProperty("Host", pin.hostHeader)
                 setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"")

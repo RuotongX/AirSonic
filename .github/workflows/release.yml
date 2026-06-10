@@ -34,6 +34,9 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
 
+      - name: Run unit tests (gate)
+        run: ./gradlew :airsonic-sender:testDebugUnitTest --no-daemon
+
       - name: Build release APK
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.keystore

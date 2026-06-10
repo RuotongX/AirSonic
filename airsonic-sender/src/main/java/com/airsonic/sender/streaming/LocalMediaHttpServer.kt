@@ -39,6 +39,7 @@ class LocalMediaHttpServer(private val source: RangeSource) {
 
     private fun handle(sock: Socket) {
         sock.use {
+            sock.soTimeout = 15000   // 防 slowloris/半开连接永久占住 handler 线程 + ContentResolver fd
             val ins = sock.getInputStream()
             val out = sock.getOutputStream()
             val reader = ins.bufferedReader(Charsets.ISO_8859_1)

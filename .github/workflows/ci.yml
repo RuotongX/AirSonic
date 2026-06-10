@@ -1,0 +1,35 @@
+name: CI
+
+# push / PR 到 main → 跑协议层单测 + 编译 debug APK。
+# 让 870 行单测从"本地仪式"变成"合并守门员"，带病提交进不了 main。
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Unit tests (airsonic-sender 纯逻辑)
+        run: ./gradlew :airsonic-sender:testDebugUnitTest --no-daemon
+
+      - name: Assemble debug APK (编译冒烟)
+        run: ./gradlew :airsonic-demo:assembleDebug --no-daemon

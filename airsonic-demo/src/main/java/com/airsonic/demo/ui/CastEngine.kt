@@ -198,7 +198,7 @@ object CastEngine {
                 val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 val projection = pm.getMediaProjection(resultCode, data)
                 val cc = SystemAudioCapture(); cap = cc
-                if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
+                if (!cc.start(projection)) { fail(L10n.s.captureFail, gen); return@thread }
                 capture = cc
                 // Sonos：走 UPnP 实时流（不进 AirPlay）。
                 // 发现阶段的 :1400 探测时好时坏（浏览器证 :1400 可达且快），故在投送时对「未知类型」
@@ -228,7 +228,9 @@ object CastEngine {
                     android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} → falling back to AirPlay (Sonos 设备此路不通)")
                 }
                 val (session, result) = connect(app, device)
-                    ?: run { fail(L10n.s.setupFail); return@thread }
+                    ?: run { fail(L10n.s.setupFail, gen); return@thread }
+                // connect 可能阻塞很久（PIN 配对最长 120s）：返回后先确认会话没被接管再动全局状态
+                if (!casting || gen != sessionGen) return@thread
                 mutePhone(app)
                 onCastingStarted(device.name)
                 session.streamCapturedPcm(
@@ -241,7 +243,7 @@ object CastEngine {
                     }
                 ) {}
             } catch (t: Throwable) {
-                fail("${L10n.s.castError}${t.message}")
+                fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 cleanup(app, cap, gen)
             }
@@ -262,14 +264,15 @@ object CastEngine {
             var pfd: ParcelFileDescriptor? = null
             try {
                 val (session, result) = connect(app, device)
-                    ?: run { fail(L10n.s.setupFail); return@thread }
-                pfd = app.contentResolver.openFileDescriptor(uri, "r") ?: run { fail(L10n.s.openFail); return@thread }
+                    ?: run { fail(L10n.s.setupFail, gen); return@thread }
+                pfd = app.contentResolver.openFileDescriptor(uri, "r") ?: run { fail(L10n.s.openFail, gen); return@thread }
+                if (!casting || gen != sessionGen) return@thread   // connect(PIN 配对)期间可能已被新会话接管
                 mutePhone(app)
                 onCastingStarted(device.name)
                 session.streamAudio(result, pfd.fileDescriptor, realtimePacing = true, isCancelled = { !casting || gen != sessionGen }) {}
                 if (casting && gen == sessionGen) statusLine.value = L10n.s.playFinished
             } catch (t: Throwable) {
-                fail("${L10n.s.castError}${t.message}")
+                fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 runCatching { pfd?.close() }
                 cleanup(app, null, gen)
@@ -290,16 +293,16 @@ object CastEngine {
         worker = thread(name = "airsonic-video", isDaemon = true) {
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = true)
-                if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
+                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
                 val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
-                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return@thread }
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
                 val url = "http://$localIp:$port${server.path}"
-                val hs = pairFor(app, device) ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail); return@thread }
+                val hs = pairFor(app, device) ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@thread }
                 val ctl = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
-                if (!ctl.connect()) { fail(L10n.s.setupFail); return@thread }
+                if (!ctl.connect()) { fail(L10n.s.setupFail, gen); return@thread }
                 videoCtl = ctl
-                if (!ctl.play(url, 0.0)) { fail(L10n.s.setupFail); return@thread }
+                if (!ctl.play(url, 0.0)) { fail(L10n.s.setupFail, gen); return@thread }
                 onCastingStarted(device.name)
                 while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
@@ -307,7 +310,7 @@ object CastEngine {
                     videoPos.value = info.first; videoDur.value = info.second
                 }
             } catch (t: Throwable) {
-                fail("${L10n.s.castError}${t.message}")
+                fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 videoCleanup(gen)
             }
@@ -325,15 +328,15 @@ object CastEngine {
         worker = thread(name = "airsonic-dlna", isDaemon = true) {
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = isVideoFile)
-                if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
+                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
                 val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
-                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return@thread }
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
                 val url = "http://$localIp:$port${server.path}"
                 val didl = buildDidl(device.name, url, src.mimeType, isVideoFile, sizeBytes = src.length)
                 val ctl = DlnaController(controlUrl); dlnaCtl = ctl
-                if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
-                if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
+                if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}", gen); return@thread }
+                if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}", gen); return@thread }
                 onCastingStarted(device.name)
                 while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
@@ -341,7 +344,7 @@ object CastEngine {
                     videoPos.value = info.first; videoDur.value = info.second
                 }
             } catch (t: Throwable) {
-                fail("${L10n.s.castError}${t.message}")
+                fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 dlnaCleanup(gen)
             }
@@ -368,7 +371,7 @@ object CastEngine {
                 )
             else com.airsonic.sender.streaming.LiveAudioHttpServer()
             val port = server.start(); live = server
-            val localIp = localIpForTarget(device.host) ?: run { fail("${L10n.s.castError}no ip"); return }
+            val localIp = localIpForTarget(device.host) ?: run { fail("${L10n.s.castError}no ip", gen); return }
             val httpUrl = "http://$localIp:$port${server.path}"
             if (!wav) {
                 val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
@@ -382,8 +385,8 @@ object CastEngine {
                        else com.airsonic.sender.dlna.buildSonosRadioDidl(device.name)
             val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
             if (!casting || gen != sessionGen) return
-            if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}"); return }
-            if (!c.play()) { fail("${L10n.s.castError}${c.lastError}"); return }
+            if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return }
+            if (!c.play()) { fail("${L10n.s.castError}${c.lastError}", gen); return }
             // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
             // 把 STREAM_MUSIC 压到 0 会在 EMUI/华为上把被捕获的 App 一起静掉。
             onCastingStarted(device.name)
@@ -404,7 +407,7 @@ object CastEngine {
                 if (wav) server.push(pcm) else enc?.encode(pcm)
             }
         } catch (t: Throwable) {
-            fail("${L10n.s.castError}${t.message}")
+            fail("${L10n.s.castError}${t.message}", gen)
         } finally {
             runCatching { ctl?.stop() }
             if (dlnaCtl === ctl) dlnaCtl = null   // 只清自己这代的控制器，别动新会话的
@@ -427,11 +430,12 @@ object CastEngine {
     fun cancelPin() { pinQueue.offer(PIN_CANCEL) }
 
     // DLNA 控制是阻塞 SOAP（且 seek 后还要 sleep），调用方是 Compose 主线程 → 必须切后台线程避免 ANR。
-    fun videoPause() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.pause() }; return }; videoCtl?.rate(0) }
-    fun videoResume() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.play() }; return }; videoCtl?.rate(1) }
+    // 注意：AirPlay 的 videoCtl 走加密 socket，主线程直调会 NetworkOnMainThreadException 被吞掉→按钮静默失灵，必须切后台。
+    fun videoPause() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.pause() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(0) } } }
+    fun videoResume() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.play() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(1) } } }
     fun videoSeek(sec: Double) {
         dlnaCtl?.let { c -> thread(isDaemon = true) { c.seek(sec); Thread.sleep(1000); c.play() }; return }
-        videoCtl?.scrub(sec)
+        videoCtl?.let { c -> thread(isDaemon = true) { c.scrub(sec) } }
     }
 
     fun stop() {
@@ -453,7 +457,8 @@ object CastEngine {
         startedAt.value = android.os.SystemClock.elapsedRealtime()
     }
 
-    private fun fail(msg: String) {
+    private fun fail(msg: String, gen: Int = -1) {
+        if (gen >= 0 && gen != sessionGen) return    // 旧会话 worker 迟到的失败：别污染新会话状态
         if (!casting) return
         if (phase.value == CastPhase.ERROR) return   // 保留更靠内层、更具体的首个错误
         statusLine.value = msg
@@ -510,7 +515,8 @@ object CastEngine {
     private fun mutePhone(app: Context) {
         runCatching {
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            savedVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            // 只在尚未保存时记录原音量：防快速重投时旧会话已压到 0、新会话把 0 当原值存下，导致音量被永久吃掉
+            if (savedVolume < 0) savedVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
         }
     }
