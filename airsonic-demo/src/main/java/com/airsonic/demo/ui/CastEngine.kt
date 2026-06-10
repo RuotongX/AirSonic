@@ -79,6 +79,8 @@ object CastEngine {
 
     private var discovery: AirplayDiscovery? = null
     @Volatile private var casting = false
+    /** 供前台服务判断会话是否仍在跑（进程被杀重启时决定 stopSelf）。 */
+    val isActive: Boolean get() = casting
     /** 会话代号：每次开始投送 +1。旧会话的 worker/finally 凭代号判断自己是否已被新会话接管，
      *  避免「停止→立即重投」时旧会话的 cleanup 把新会话的前台服务/状态掐死。 */
     @Volatile private var sessionGen = 0
@@ -192,11 +194,12 @@ object CastEngine {
         CaptureProjectionService.start(app)
         worker = thread(name = "airsonic-cast", isDaemon = true) {
             var cap: SystemAudioCapture? = null
+            var projection: android.media.projection.MediaProjection? = null
             try {
                 var waited = 0
                 while (!CaptureProjectionService.isForeground && waited < 2000) { Thread.sleep(50); waited += 50 }
                 val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                val projection = pm.getMediaProjection(resultCode, data)
+                projection = pm.getMediaProjection(resultCode, data)
                 val cc = SystemAudioCapture(); cap = cc
                 if (!cc.start(projection)) { fail(L10n.s.captureFail, gen); return@thread }
                 capture = cc
@@ -245,7 +248,7 @@ object CastEngine {
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                cleanup(app, cap, gen)
+                cleanup(app, cap, projection, gen)
             }
         }
     }
@@ -275,7 +278,7 @@ object CastEngine {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 runCatching { pfd?.close() }
-                cleanup(app, null, gen)
+                cleanup(app, null, null, gen)
             }
         }
     }
@@ -291,28 +294,31 @@ object CastEngine {
         casting = true; isVideo.value = true
         val gen = ++sessionGen
         worker = thread(name = "airsonic-video", isDaemon = true) {
+            var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
+            var ctl: com.airsonic.sender.streaming.AirplayVideoController? = null
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = true)
                 if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
-                val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
+                server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
                 val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
                 val url = "http://$localIp:$port${server.path}"
                 val hs = pairFor(app, device) ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@thread }
-                val ctl = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
-                if (!ctl.connect()) { fail(L10n.s.setupFail, gen); return@thread }
-                videoCtl = ctl
-                if (!ctl.play(url, 0.0)) { fail(L10n.s.setupFail, gen); return@thread }
+                val c = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
+                ctl = c
+                if (!c.connect()) { fail(L10n.s.setupFail, gen); return@thread }
+                videoCtl = c
+                if (!c.play(url, 0.0)) { fail(L10n.s.setupFail, gen); return@thread }
                 onCastingStarted(device.name)
                 while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
-                    val info = ctl.playbackInfo() ?: continue
+                    val info = c.playbackInfo() ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
                 }
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                videoCleanup(gen)
+                videoCleanup(gen, server, ctl)
             }
         }
     }
@@ -326,27 +332,29 @@ object CastEngine {
         casting = true; isVideo.value = isVideoFile
         val gen = ++sessionGen
         worker = thread(name = "airsonic-dlna", isDaemon = true) {
+            var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
+            var ctl: DlnaController? = null
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = isVideoFile)
                 if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
-                val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
+                server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
                 val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
                 val url = "http://$localIp:$port${server.path}"
                 val didl = buildDidl(device.name, url, src.mimeType, isVideoFile, sizeBytes = src.length)
-                val ctl = DlnaController(controlUrl); dlnaCtl = ctl
-                if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}", gen); return@thread }
-                if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}", gen); return@thread }
+                val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
+                if (!c.setUri(url, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return@thread }
+                if (!c.play()) { fail("${L10n.s.castError}${c.lastError}", gen); return@thread }
                 onCastingStarted(device.name)
                 while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
-                    val info = ctl.getPositionInfo() ?: continue
+                    val info = c.getPositionInfo() ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
                 }
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                dlnaCleanup(gen)
+                dlnaCleanup(gen, server, ctl)
             }
         }
     }
@@ -416,11 +424,17 @@ object CastEngine {
         }
     }
 
-    private fun dlnaCleanup(gen: Int) {
-        if (gen != sessionGen) return     // 已被新会话接管：全局控制器/服务都归新会话所有
+    private fun dlnaCleanup(
+        gen: Int,
+        ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,
+        ownCtl: DlnaController? = null,
+    ) {
+        runCatching { ownCtl?.stop() }       // 无条件关自己建的，防 stale worker 早退泄漏 socket/连接
+        runCatching { ownServer?.stop() }
+        if (gen != sessionGen) return        // 已被新会话接管：别动全局引用/UI 状态
         casting = false
-        runCatching { dlnaCtl?.stop() }; dlnaCtl = null
-        runCatching { httpServer?.stop() }; httpServer = null
+        if (dlnaCtl === ownCtl) dlnaCtl = null
+        if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
         startedAt.value = 0L; level.value = 0f; worker = null
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
@@ -465,9 +479,15 @@ object CastEngine {
         phase.value = CastPhase.ERROR
     }
 
-    private fun cleanup(app: Context, cap: SystemAudioCapture?, gen: Int) {
-        runCatching { cap?.stop() }      // 自己的捕获器总要关
-        if (gen != sessionGen) return     // 已被新会话接管：别动全局状态/前台服务
+    private fun cleanup(
+        app: Context,
+        cap: SystemAudioCapture?,
+        projection: android.media.projection.MediaProjection?,
+        gen: Int,
+    ) {
+        runCatching { cap?.stop() }                  // 自己的捕获器总要关
+        runCatching { projection?.stop() }           // MediaProjection 也要停，否则系统投屏指示常驻、干扰下次授权
+        if (gen != sessionGen) return                // 已被新会话接管：别动全局状态/前台服务
         casting = false
         capture = null
         restorePhone(app)
@@ -501,11 +521,18 @@ object CastEngine {
         return localWifiIp()
     }
 
-    private fun videoCleanup(gen: Int) {
-        if (gen != sessionGen) return     // 已被新会话接管
+    private fun videoCleanup(
+        gen: Int,
+        ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,
+        ownCtl: com.airsonic.sender.streaming.AirplayVideoController? = null,
+    ) {
+        // 先无条件关掉本 worker 自己建的 server/ctl（即使已被新会话接管，也要关自己的，否则 socket/连接泄漏）
+        runCatching { ownCtl?.stop() }; runCatching { ownCtl?.close() }
+        runCatching { ownServer?.stop() }
+        if (gen != sessionGen) return     // 已被新会话接管：别动全局引用/UI 状态
         casting = false
-        runCatching { videoCtl?.stop() }; runCatching { videoCtl?.close() }; videoCtl = null
-        runCatching { httpServer?.stop() }; httpServer = null
+        if (videoCtl === ownCtl) videoCtl = null
+        if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
         startedAt.value = 0L; level.value = 0f; worker = null
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
@@ -580,6 +607,7 @@ object CastEngine {
         // 1) 已配对 → 新连接 pair-verify（该连接即会话通道）
         if (PairingStore.isPaired(app, device.host)) {
             val hs = newHs(app, device)
+            hs.knownAccessoryLtpk = PairingStore.accessoryLtpk(app, device.host)   // 有存即强制验签
             if (hs.pairVerify {}) return hs
             PairingStore.unpair(app, device.host)   // 对方已忘 → 清除重配
         }
@@ -591,6 +619,7 @@ object CastEngine {
         // 3) 需要密码 → PIN pair-setup(M1-M6,持久化身份) → 然后**另开新连接** pair-verify 建会话
         if (!doPinSetup(app, device)) return null
         val hs = newHs(app, device)
+        hs.knownAccessoryLtpk = PairingStore.accessoryLtpk(app, device.host)
         return if (hs.pairVerify {}) hs else { PairingStore.unpair(app, device.host); fail(L10n.s.pairFail); null }
     }
 
@@ -605,6 +634,7 @@ object CastEngine {
         if (pin == null || pin == PIN_CANCEL) { pinAborted = true; return false }
         if (!hs.pairSetup(pin, onStep = {}, transient = false)) { fail(L10n.s.pairFail); pinAborted = true; return false }
         PairingStore.markPaired(app, device.host)
+        hs.lastAccessoryLtpk?.let { PairingStore.saveAccessoryLtpk(app, device.host, it) }   // M6 已验签的 LTPK 落库
         return true
     }
 

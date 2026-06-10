@@ -47,6 +47,9 @@ class SystemAudioCapture(
 
     private var audioRecord: AudioRecord? = null
 
+    /** 保护 read 与 release 不交叠：read 持锁阻塞，stop 在锁外先 stop() 解阻塞、再持锁 release。 */
+    private val ioLock = Any()
+
     @Volatile
     var running: Boolean = false
         private set
@@ -114,14 +117,18 @@ class SystemAudioCapture(
      * @return PCM 块；读到 0 字节返回空数组（继续）；出错/停止返回 null（结束）。
      */
     fun readChunk(chunkBytes: Int = 4096): ByteArray? {
-        val record = audioRecord ?: return null
-        if (!running) return null
         val buffer = ByteArray(chunkBytes)
-        val read = record.read(buffer, 0, buffer.size)
-        return when {
-            read > 0 -> buffer.copyOf(read)
-            read == 0 -> ByteArray(0)
-            else -> null
+        // 持锁阻塞读：stop() 在锁外调 record.stop() 解阻塞后才能拿到锁去 release，
+        // 因此 release 永远不会落在一次进行中的 read 里（个别 ROM 上 release-during-read 会 native crash）。
+        synchronized(ioLock) {
+            val record = audioRecord ?: return null
+            if (!running) return null
+            val read = record.read(buffer, 0, buffer.size)
+            return when {
+                read > 0 -> buffer.copyOf(read)
+                read == 0 -> ByteArray(0)
+                else -> null
+            }
         }
     }
 
@@ -158,11 +165,13 @@ class SystemAudioCapture(
 
     fun stop() {
         running = false
-        audioRecord?.let {
-            runCatching { it.stop() }
-            it.release()
+        // 先在锁外 stop()：解开 readChunk 里持锁阻塞的 read，使其返回并放锁。
+        runCatching { audioRecord?.stop() }
+        // 再持锁 release：此时不可能有进行中的 read（它已返回放锁），避免 release-during-read 崩溃。
+        synchronized(ioLock) {
+            runCatching { audioRecord?.release() }
+            audioRecord = null
         }
-        audioRecord = null
         Log.i(TAG, "Capture stopped")
     }
 

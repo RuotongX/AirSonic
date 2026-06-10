@@ -52,6 +52,20 @@ object PairingStore {
         val sp = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val set = HashSet(sp.getStringSet(KEY_PAIRED, emptySet()) ?: emptySet())
         set.remove(host)
-        sp.edit().putStringSet(KEY_PAIRED, set).apply()
+        sp.edit().putStringSet(KEY_PAIRED, set).remove("$KEY_ACC_LTPK$host").apply()
     }
+
+    /** 首次 PIN 配对(M6 已验签)得到的接收端 LTPK；pair-verify 用它强制验签防冒充。 */
+    fun accessoryLtpk(context: Context, host: String): ByteArray? =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString("$KEY_ACC_LTPK$host", null)
+            ?.let { Base64.decode(it, Base64.NO_WRAP) }
+
+    fun saveAccessoryLtpk(context: Context, host: String, ltpk: ByteArray) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putString("$KEY_ACC_LTPK$host", Base64.encodeToString(ltpk, Base64.NO_WRAP))
+            .apply()
+    }
+
+    private const val KEY_ACC_LTPK = "acc_ltpk_"
 }

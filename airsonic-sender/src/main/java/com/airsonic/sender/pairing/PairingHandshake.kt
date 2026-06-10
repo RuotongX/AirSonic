@@ -45,6 +45,13 @@ class PairingHandshake(
     var sessionKey: ByteArray? = null
         private set
 
+    /** PIN pair-setup M6 验签通过的接收端 LTPK——调用方应按 host 持久化，供日后 pair-verify 验签。 */
+    var lastAccessoryLtpk: ByteArray? = null
+        private set
+
+    /** 已知的接收端 LTPK（来自首次 PIN 配对的持久化）。设置后 pair-verify 将强制验 M2 签名，防中间人/冒充。 */
+    var knownAccessoryLtpk: ByteArray? = null
+
     sealed class Step {
         data class Info(val message: String) : Step()
         data class Success(val message: String) : Step()
@@ -242,6 +249,7 @@ class PairingHandshake(
                 onStep(Step.Failure("M6 接收端身份签名验证失败"))
                 return false
             }
+            lastAccessoryLtpk = accLtpk   // 已验签的接收端长期公钥，交调用方持久化
             onStep(Step.Success("pair-setup 完成 ✓ 接收端身份已验证 (id=${String(accId)})"))
             true
         } catch (t: Throwable) {
@@ -304,8 +312,22 @@ class PairingHandshake(
             val sub2 = Tlv8.decode(dec2)
             val accId = sub2[Tlv8.Type.IDENTIFIER]
             val accSig = sub2[Tlv8.Type.SIGNATURE]
-            if (accId != null && accSig != null) {
-                onStep(Step.Info("M2 接收端身份 id=${String(accId)}（签名随身份库校验，Demo 阶段记录）"))
+            // 验接收端签名（accInfo = 对方临时公钥 + 对方身份 + 我方临时公钥）：
+            // 没这步 pair-verify 退化成无认证 ECDH，可被冒充设备中间人。LTPK 来自首次 PIN 配对(M6 已验签)。
+            val known = knownAccessoryLtpk
+            if (known != null) {
+                if (accId == null || accSig == null) {
+                    onStep(Step.Failure("M2 缺少接收端身份/签名（已存 LTPK 时必须携带）"))
+                    return false
+                }
+                val accInfo = CryptoPrimitives.concat(theirPublic, accId, ephemeral.publicBytes)
+                if (!CryptoPrimitives.ed25519Verify(known, accInfo, accSig)) {
+                    onStep(Step.Failure("M2 接收端签名验证失败——对方非首次配对的设备（可能被冒充），中止"))
+                    return false
+                }
+                onStep(Step.Info("M2 接收端签名验证通过 ✓ (id=${String(accId)})"))
+            } else if (accId != null) {
+                onStep(Step.Info("M2 接收端身份 id=${String(accId)}（本机未存该设备 LTPK，跳过验签；重新 PIN 配对后启用）"))
             }
             onStep(Step.Info("ECDH + HKDF 会话密钥派生完成 (${sessionKey.size}B)"))
 

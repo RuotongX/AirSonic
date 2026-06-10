@@ -27,6 +27,12 @@ class CaptureProjectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 进程被杀后系统以 null intent 重启时,CastEngine 单例状态已灭、没有投送在跑,
+        // 再 startForeground 就成了停不掉的僵尸通知 → 直接 stopSelf。
+        if (intent == null && !com.airsonic.demo.ui.CastEngine.isActive) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Android 10+ 要求承载 MediaProjection 的前台 Service 显式声明 mediaProjection 类型，
         // 否则 MediaProjection.start() 会抛 SecurityException。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -39,7 +45,7 @@ class CaptureProjectionService : Service() {
             startForeground(NOTIF_ID, buildNotification())
         }
         isForeground = true
-        return START_STICKY
+        return START_NOT_STICKY   // 投送会话由 CastEngine 显式管理,不要系统自动重启
     }
 
     override fun onDestroy() {
