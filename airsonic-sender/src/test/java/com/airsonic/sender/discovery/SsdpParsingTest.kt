@@ -6,6 +6,7 @@ package com.airsonic.sender.discovery
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SsdpParsingTest {
@@ -66,5 +67,20 @@ class SsdpParsingTest {
             "<serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>" +
             "<controlURL>/c</controlURL></service></serviceList></device></root>"
         assertNull(parseRenderer(xml, "http://h:1/d.xml"))
+    }
+
+    @Test fun cleanFriendlyName_sonosExtractsModel() {
+        assertEquals("Sonos Arc",
+            cleanFriendlyName("192.168.100.28 - Sonos Arc - RINCON_804AF270B99A01400"))
+    }
+
+    @Test fun cleanFriendlyName_keepsNormalShortName() {
+        assertEquals("Living Room TV", cleanFriendlyName("Living Room TV"))
+    }
+
+    @Test fun cleanFriendlyName_truncatesOverlong() {
+        val r = cleanFriendlyName("A".repeat(40))
+        assertEquals(28, r.length)
+        assertTrue(r.endsWith("…"))
     }
 }

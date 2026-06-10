@@ -47,7 +47,7 @@ class DlnaController(private val controlUrl: String) {
             val conn = (pin.url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 3000
-                readTimeout = 5000
+                readTimeout = 10000   // Sonos 对电台 SetAVTransportURI 会先去连流再回响应，5s 偏紧
                 instanceFollowRedirects = false   // UPnP 控制无重定向；禁止 JDK 跟随，闭合 pinLanUrl 的 SSRF 残口
                 doOutput = true
                 setRequestProperty("Host", pin.hostHeader)
@@ -68,7 +68,7 @@ class DlnaController(private val controlUrl: String) {
                 Log.w(TAG, "$name failed: $lastError")
                 null
             } else body
-        }.onFailure { lastError = "exc:${it.javaClass.simpleName}:${it.message}"; Log.e(TAG, "$name exc", it) }
+        }.onFailure { lastError = "exc:$name:${it.javaClass.simpleName}:${it.message}"; Log.e(TAG, "$name exc", it) }
             .getOrNull()
     }
 

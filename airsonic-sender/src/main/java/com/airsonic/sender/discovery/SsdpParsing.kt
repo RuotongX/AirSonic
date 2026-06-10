@@ -85,6 +85,22 @@ fun parseRenderer(xml: String, locationUrl: String): DlnaRenderer? {
 
     val rel = avtControlUrl ?: return null
     val base = firstText("URLBase")?.ifEmpty { null } ?: locationUrl
-    val name = firstText("friendlyName")?.ifEmpty { null } ?: "DLNA"
+    val name = cleanFriendlyName(firstText("friendlyName")?.ifEmpty { null } ?: "DLNA")
     return DlnaRenderer(friendlyName = name, avTransportControlUrl = resolveUrl(base, rel))
+}
+
+private val IPV4 = Regex("""\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}""")
+
+/**
+ * 清理冗长的 friendlyName。Sonos 形如 "192.168.x.x - Sonos Arc - RINCON_xxx"——
+ * 取既不是 IP 也不是 RINCON 序列号的型号段。其它设备：超长则截断。
+ */
+fun cleanFriendlyName(raw: String): String {
+    val t = raw.trim()
+    if (t.contains(" - ") && t.contains("RINCON", ignoreCase = true)) {
+        t.split(" - ").map { it.trim() }.firstOrNull {
+            it.isNotEmpty() && !it.startsWith("RINCON", true) && !IPV4.matches(it)
+        }?.let { return it }
+    }
+    return if (t.length > 28) t.take(27) + "…" else t
 }

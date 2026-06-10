@@ -397,6 +397,9 @@ object CastEngine {
                        else com.airsonic.sender.dlna.buildSonosRadioDidl(device.name)
             val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
             if (!casting || gen != sessionGen) return
+            // 提前暴露路由诊断：setUri 若超时也能看出控制端点/本机流地址是否合理（多网卡选错等）
+            val ctlHost = controlUrl.removePrefix("http://").substringBefore("/")
+            activeCodec.value = "${if (wav) "WAV" else "AAC"}｜投…｜ctl=$ctlHost｜流=$localIp:$port"
             if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return }
             if (!c.play()) { fail("${L10n.s.castError}${c.lastError}", gen); return }
             // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
