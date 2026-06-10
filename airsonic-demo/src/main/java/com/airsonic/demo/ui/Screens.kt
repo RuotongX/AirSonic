@@ -673,6 +673,13 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             modifier = Modifier.fillMaxWidth(),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            s.licenseLine,
+            color = Aurora.TextDim, fontSize = 10.sp, lineHeight = 14.sp,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
     }
 }
 
