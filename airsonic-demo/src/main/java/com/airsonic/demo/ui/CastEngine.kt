@@ -127,14 +127,20 @@ object CastEngine {
                 if (idx >= 0) devices[idx] = device else devices.add(device)
                 // 自动选中第一台可投设备（若尚未选）
                 if (selected.value == null && isCastable(device)) selected.value = device
-                // 异步识别 Sonos：是则升级类型 + 控制地址（用于走 UPnP 流路径）
+                // 异步识别 Sonos：是则升级类型 + 控制地址（用于走 UPnP 流路径）。
+                // 重试 3 次防瞬时超时；全失败则从 probed 集合移除，允许后续 onDeviceFound/刷新再探。
                 if (device.type != DeviceType.SONOS && device.host.isNotEmpty() && probedSonosHosts.add(device.host)) {
                     thread(isDaemon = true) {
-                        val ctl = com.airsonic.sender.dlna.probeSonos(device.host) ?: return@thread
+                        var ctl: String? = null
+                        repeat(3) { if (ctl == null) { ctl = com.airsonic.sender.dlna.probeSonos(device.host); if (ctl == null) Thread.sleep(1200) } }
+                        if (ctl == null) { probedSonosHosts.remove(device.host); return@thread }
                         val cur = devices.indexOfFirst { it.id == device.id }
-                        if (cur >= 0) devices[cur] = devices[cur].copy(
-                            type = DeviceType.SONOS, controlUrl = ctl
-                        )
+                        if (cur >= 0) {
+                            val upgraded = devices[cur].copy(type = DeviceType.SONOS, controlUrl = ctl)
+                            devices[cur] = upgraded
+                            // 关键：同步升级当前选中引用，否则投送仍用旧的 UNKNOWN → 误走 AirPlay
+                            if (selected.value?.id == device.id) selected.value = upgraded
+                        }
                     }
                 }
             }
@@ -174,7 +180,9 @@ object CastEngine {
 
     /** 系统音频捕获投送（屏幕镜像仅声音 / 投应用 / 浏览器）。需 MediaProjection 授权结果。 */
     fun startSystemAudioCast(context: Context, resultCode: Int, data: Intent) {
-        val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        val sel = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        // 取列表里最新的同 id 条目（可能已被异步探测升级为 SONOS），避免用到旧引用误走 AirPlay
+        val device = devices.firstOrNull { it.id == sel.id } ?: sel
         if (!isCastable(device)) { statusLine.value = "${device.name} ${L10n.s.notSupportedSuffix}"; phase.value = CastPhase.ERROR; return }
         val app = context.applicationContext
         phase.value = CastPhase.CONNECTING
@@ -191,9 +199,13 @@ object CastEngine {
                 val cc = SystemAudioCapture(); cap = cc
                 if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
                 capture = cc
-                // Sonos：走 UPnP 实时 AAC 流（不进 AirPlay）
-                if (device.type == DeviceType.SONOS && device.controlUrl != null) {
-                    startSonosAudioStream(app, cc, device)
+                // Sonos：走 UPnP 实时 AAC 流（不进 AirPlay）。
+                // 即时兜底探测——发现阶段没来得及/没识别成 Sonos 也能在此刻确认，路由不再依赖发现时序。
+                // 短超时：非 Sonos 设备（HomePod 无 :1400）最多多等约 1.5s。
+                val sonosCtl = device.controlUrl?.takeIf { device.type == DeviceType.SONOS }
+                    ?: com.airsonic.sender.dlna.probeSonos(device.host, connectTimeoutMs = 1500, readTimeoutMs = 1500)
+                if (sonosCtl != null) {
+                    startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl))
                     return@thread
                 }
                 val (session, result) = connect(app, device)
