@@ -289,7 +289,7 @@ object CastEngine {
         val gen = ++sessionGen
         worker = thread(name = "airsonic-video", isDaemon = true) {
             try {
-                val src = ContentResolverRangeSource(app, uri)
+                val src = ContentResolverRangeSource(app, uri, isVideo = true)
                 if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
                 val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
@@ -324,13 +324,13 @@ object CastEngine {
         val gen = ++sessionGen
         worker = thread(name = "airsonic-dlna", isDaemon = true) {
             try {
-                val src = ContentResolverRangeSource(app, uri)
+                val src = ContentResolverRangeSource(app, uri, isVideo = isVideoFile)
                 if (src.length <= 0) { fail(L10n.s.openFail); return@thread }
                 val server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
                 val port = server.start(); httpServer = server
                 val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip"); return@thread }
                 val url = "http://$localIp:$port${server.path}"
-                val didl = buildDidl(device.name, url, src.mimeType, isVideoFile)
+                val didl = buildDidl(device.name, url, src.mimeType, isVideoFile, sizeBytes = src.length)
                 val ctl = DlnaController(controlUrl); dlnaCtl = ctl
                 if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
                 if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }

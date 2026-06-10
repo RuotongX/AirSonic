@@ -22,6 +22,14 @@ class DidlTest {
         assertTrue(didl.contains("object.item.audioItem.musicTrack"))
     }
 
+    @Test fun resSizeEmittedOnlyWhenPositive() {
+        assertTrue(buildDidl("M", "http://h/v", "video/mp4", true, sizeBytes = 12345L)
+            .contains("""size="12345""""))
+        // 默认/非正数不写 size 属性
+        assertTrue(!buildDidl("M", "http://h/v", "video/mp4", true).contains("size="))
+        assertTrue(!buildDidl("M", "http://h/v", "video/mp4", true, sizeBytes = 0L).contains("size="))
+    }
+
     @Test fun titleAndUrlAreEscaped() {
         val didl = buildDidl("A & B", "http://h/x?a=1&b=2", "video/mp4", true)
         assertTrue(didl.contains("A &amp; B"))

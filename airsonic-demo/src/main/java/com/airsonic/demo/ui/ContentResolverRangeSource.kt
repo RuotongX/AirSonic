@@ -6,6 +6,8 @@ package com.airsonic.demo.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
+import com.airsonic.sender.dlna.correctMediaMime
 import com.airsonic.sender.streaming.RangeSource
 import java.io.FileInputStream
 import java.io.InputStream
@@ -14,14 +16,28 @@ import java.io.InputStream
 class ContentResolverRangeSource(
     private val context: Context,
     private val uri: Uri,
+    private val isVideo: Boolean = true,
 ) : RangeSource {
     override val length: Long by lazy {
         runCatching {
             context.contentResolver.openFileDescriptor(uri, "r")!!.use { it.statSize }
         }.getOrDefault(-1L)
     }
+
+    /** SAF 显示名（取扩展名用），失败回退到 uri 末段。 */
+    private val displayName: String by lazy {
+        runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: uri.lastPathSegment ?: ""
+    }
+
+    /**
+     * 纠正 mime：ContentResolver 对 MKV/AVI 等常给 application/octet-stream，
+     * 严格电视会拒播，故按文件名扩展名纠正（见 [correctMediaMime]）。
+     */
     override val mimeType: String by lazy {
-        context.contentResolver.getType(uri) ?: "video/mp4"
+        correctMediaMime(context.contentResolver.getType(uri), displayName, isVideo)
     }
     override fun open(offset: Long): InputStream {
         val pfd = context.contentResolver.openFileDescriptor(uri, "r")!!
