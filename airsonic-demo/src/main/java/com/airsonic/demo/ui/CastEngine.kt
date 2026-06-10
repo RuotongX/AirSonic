@@ -207,14 +207,16 @@ object CastEngine {
                 // 发现阶段的 :1400 探测时好时坏（浏览器证 :1400 可达且快），故在投送时对「未知类型」
                 // 设备多探几次把它探可靠；已识别的 AirPlay 设备（HomePod/AppleTV/Mac/小米）跳过，不增延迟。
                 // SSDP 发现的 DLNA 条目（Sonos 会同时以两种形态出现）同样探 :1400 归位。
+                var probeReason = "skip"
                 val sonosCtl: String? = when {
-                    device.type == DeviceType.SONOS && device.controlUrl != null -> device.controlUrl
+                    device.type == DeviceType.SONOS && device.controlUrl != null -> device.controlUrl.also { probeReason = "preset" }
                     device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN
                         || device.type == DeviceType.DLNA -> {
                         var c: String? = null
                         repeat(4) {
                             if (c == null && device.host.isNotEmpty() && casting && gen == sessionGen) {
-                                c = com.airsonic.sender.dlna.probeSonos(device.host, connectTimeoutMs = 3000, readTimeoutMs = 3000)
+                                val (ctl, reason) = com.airsonic.sender.dlna.probeSonosWithReason(device.host, 3000, 3000)
+                                c = ctl; probeReason = reason
                                 if (c == null) Thread.sleep(500)
                             }
                         }
@@ -228,7 +230,7 @@ object CastEngine {
                     return@thread
                 }
                 if (device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN || device.type == DeviceType.DLNA) {
-                    android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} → falling back to AirPlay (Sonos 设备此路不通)")
+                    android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} ($probeReason) → falling back to AirPlay")
                 }
                 val (session, result) = connect(app, device)
                     ?: run { fail(L10n.s.setupFail, gen); return@thread }
@@ -236,6 +238,8 @@ object CastEngine {
                 if (!casting || gen != sessionGen) return@thread
                 mutePhone(app)
                 onCastingStarted(device.name)
+                // 路由诊断：走到这里＝没进 Sonos UPnP、回退了 AirPlay。把类型/host/探测原因打到投送页那行，便于定位。
+                activeCodec.value = "${activeCodec.value}｜t=${device.type}｜h=${device.host}｜1400=$probeReason"
                 session.streamCapturedPcm(
                     result = result, channels = 2,
                     isCancelled = { !casting || gen != sessionGen },
