@@ -401,26 +401,32 @@ object CastEngine {
             val ctlHost = controlUrl.removePrefix("http://").substringBefore("/")
             activeCodec.value = "${if (wav) "WAV" else "AAC"}｜投…｜ctl=$ctlHost｜流=$localIp:$port"
             if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return }
+            // 关键：Sonos 对电台流 Play 会先连流、等首个音频帧确认格式才返回。
+            // 若 play 在推流之前发、流是空的，Play 必然等到 SOAP 超时。
+            // 故先起捕获→(编码)→推流线程，让流产出数据，再 play()。
+            val fmtLabel = if (wav) "WAV" else "AAC"
+            val pump = thread(isDaemon = true, name = "airsonic-sonos-pump") {
+                while (casting && gen == sessionGen) {
+                    val pcm = cc.readChunk(4096) ?: break
+                    if (pcm.isEmpty()) continue
+                    level.value = peakOf(pcm)
+                    if (wav) server.push(pcm) else enc?.encode(pcm)
+                }
+            }
+            Thread.sleep(500)   // 让编码器先产几帧，Sonos 一连流即有数据可拉
             if (!c.play()) { fail("${L10n.s.castError}${c.lastError}", gen); return }
             // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
             // 把 STREAM_MUSIC 压到 0 会在 EMUI/华为上把被捕获的 App 一起静掉。
             onCastingStarted(device.name)
             // 诊断走独立低频线程：getTransportInfo 是阻塞 SOAP（最坏 8s），
             // 绝不能插在捕获热循环里（AudioRecord 缓冲仅几百毫秒，卡一次就 overrun 爆音/断流）。
-            val fmtLabel = if (wav) "WAV" else "AAC"
             thread(isDaemon = true, name = "airsonic-sonos-diag") {
                 while (casting && gen == sessionGen && dlnaCtl === c) {
                     activeCodec.value = "$fmtLabel｜S:${c.getTransportInfo() ?: "?"}｜流x${server.connections}｜$localIp:$port"
                     runCatching { Thread.sleep(3000) }
                 }
             }
-            // 捕获 → (编码) → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
-            while (casting && gen == sessionGen) {
-                val pcm = cc.readChunk(4096) ?: break
-                if (pcm.isEmpty()) continue
-                level.value = peakOf(pcm)
-                if (wav) server.push(pcm) else enc?.encode(pcm)
-            }
+            pump.join()   // 阻塞到停止（capture 被外层 cleanup 关 → readChunk null → pump 退出）
         } catch (t: Throwable) {
             fail("${L10n.s.castError}${t.message}", gen)
         } finally {
