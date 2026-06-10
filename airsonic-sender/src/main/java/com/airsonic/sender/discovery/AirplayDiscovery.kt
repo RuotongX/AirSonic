@@ -14,6 +14,10 @@ import com.airsonic.sender.api.DeviceCapabilities
 import com.airsonic.sender.api.DeviceListener
 import com.airsonic.sender.api.DeviceType
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * 基于 Android [NsdManager] 的 AirPlay 设备发现。
@@ -34,7 +38,14 @@ class AirplayDiscovery(context: Context) {
     /** 重启发现的待办标志：true 表示「停止完成后立即重新发现」。 */
     @Volatile private var restartPending = false
 
-    private val resolving = ConcurrentHashMap<String, Boolean>()
+    // ---- NsdManager resolve 串行化（关键稳定性修复）----
+    // NsdManager 同一时刻只允许一个 resolveService 在飞；并发会 FAILURE_ALREADY_ACTIVE。
+    // 原实现失败不重试 → 多台设备同时出现时部分永久解析不出来（设备时隐时现）。
+    // 改为单线程队列逐个解析 + 失败重试，根治。
+    private val resolveQueue = LinkedBlockingQueue<NsdServiceInfo>()
+    private val queuedNames = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var resolveWorker: Thread? = null
+    @Volatile private var resolveRunning = false
 
     /**
      * 启动（或刷新）发现。可重复调用：若已在发现中，则发起一次**干净重启**——
@@ -58,7 +69,7 @@ class AirplayDiscovery(context: Context) {
     }
 
     private fun beginDiscovery() {
-        resolving.clear()
+        startResolveWorker()
         val l = object : NsdManager.DiscoveryListener {
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
                 userListener?.onDiscoveryFailed("onStartDiscoveryFailed code=$errorCode")
@@ -87,6 +98,8 @@ class AirplayDiscovery(context: Context) {
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+                // 允许设备再次出现时重新入队解析（EMUI 偶发误丢失）
+                queuedNames.remove(serviceInfo.serviceName)
                 val device = AirDevice(
                     name = serviceInfo.serviceName,
                     host = serviceInfo.host?.hostAddress ?: "",
@@ -105,25 +118,61 @@ class AirplayDiscovery(context: Context) {
             runCatching { nsdManager.stopServiceDiscovery(it) }
         }
         discoveryListener = null
+        stopResolveWorker()
         releaseMulticastLock()
     }
 
+    /** 入队（去重）。真正的 resolve 由单线程 worker 串行执行，避免 NsdManager 并发限制。 */
     private fun resolve(serviceInfo: NsdServiceInfo) {
-        val key = serviceInfo.serviceName
-        if (resolving.putIfAbsent(key, true) != null) return
+        if (!queuedNames.add(serviceInfo.serviceName)) return
+        resolveQueue.offer(serviceInfo)
+    }
 
-        nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-            override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                resolving.remove(key)
-                Log.w(TAG, "resolve failed code=$errorCode name=${serviceInfo.serviceName}")
+    private fun startResolveWorker() {
+        if (resolveWorker != null) return
+        resolveRunning = true
+        resolveWorker = thread(isDaemon = true, name = "airsonic-nsd-resolve") {
+            while (resolveRunning) {
+                val info = resolveQueue.poll(1, TimeUnit.SECONDS) ?: continue
+                resolveOneBlocking(info)
+                queuedNames.remove(info.serviceName)   // 解析完成后放行，设备再现可重解析
             }
+        }
+    }
 
-            override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                resolving.remove(key)
-                val device = toAirDevice(serviceInfo)
-                userListener?.onDeviceFound(device)
+    /** 串行解析一个服务，失败重试至多 3 次（含 FAILURE_ALREADY_ACTIVE）；阻塞到回调或超时。 */
+    private fun resolveOneBlocking(info: NsdServiceInfo) {
+        var attempt = 0
+        while (resolveRunning && attempt < 3) {
+            attempt++
+            val latch = CountDownLatch(1)
+            var ok = false
+            try {
+                nsdManager.resolveService(info, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
+                        Log.w(TAG, "resolve failed code=$errorCode name=${si.serviceName} attempt=$attempt")
+                        latch.countDown()
+                    }
+                    override fun onServiceResolved(si: NsdServiceInfo) {
+                        ok = true
+                        runCatching { userListener?.onDeviceFound(toAirDevice(si)) }
+                        latch.countDown()
+                    }
+                })
+            } catch (t: Throwable) {
+                Log.w(TAG, "resolveService threw: ${t.message}"); latch.countDown()
             }
-        })
+            if (!latch.await(6, TimeUnit.SECONDS)) Log.w(TAG, "resolve await timeout name=${info.serviceName}")
+            if (ok) return
+            runCatching { Thread.sleep(300) }   // 退避后重试
+        }
+    }
+
+    private fun stopResolveWorker() {
+        resolveRunning = false
+        resolveWorker = null
+        resolveQueue.clear()
+        queuedNames.clear()
     }
 
     private fun toAirDevice(info: NsdServiceInfo): AirDevice {

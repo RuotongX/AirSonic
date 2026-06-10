@@ -76,7 +76,6 @@ object CastEngine {
     private var httpServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
     private var dlnaDiscovery: DlnaDiscovery? = null
-    private val probedSonosHosts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var dlnaCtl: DlnaController? = null
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
@@ -127,22 +126,8 @@ object CastEngine {
                 if (idx >= 0) devices[idx] = device else devices.add(device)
                 // 自动选中第一台可投设备（若尚未选）
                 if (selected.value == null && isCastable(device)) selected.value = device
-                // 异步识别 Sonos：是则升级类型 + 控制地址（用于走 UPnP 流路径）。
-                // 重试 3 次防瞬时超时；全失败则从 probed 集合移除，允许后续 onDeviceFound/刷新再探。
-                if (device.type != DeviceType.SONOS && device.host.isNotEmpty() && probedSonosHosts.add(device.host)) {
-                    thread(isDaemon = true) {
-                        var ctl: String? = null
-                        repeat(3) { if (ctl == null) { ctl = com.airsonic.sender.dlna.probeSonos(device.host); if (ctl == null) Thread.sleep(1200) } }
-                        if (ctl == null) { probedSonosHosts.remove(device.host); return@thread }
-                        val cur = devices.indexOfFirst { it.id == device.id }
-                        if (cur >= 0) {
-                            val upgraded = devices[cur].copy(type = DeviceType.SONOS, controlUrl = ctl)
-                            devices[cur] = upgraded
-                            // 关键：同步升级当前选中引用，否则投送仍用旧的 UNKNOWN → 误走 AirPlay
-                            if (selected.value?.id == device.id) selected.value = upgraded
-                        }
-                    }
-                }
+                // 注：Sonos 识别/路由改为「投送时即时探测 :1400」（见 startSystemAudioCast），
+                // 发现期不再起探测线程，避免给本就脆弱的 NsdManager 发现添乱。
             }
             override fun onDeviceLost(device: AirDevice) {
                 devices.removeAll { it.id == device.id }
