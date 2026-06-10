@@ -22,7 +22,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="AirSonic"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.AirSonic">
+        <!-- 投屏目标全是局域网明文 HTTP(UPnP/DLNA/Sonos :1400/SOAP)。Android 9+ 默认禁明文,
+             不开此项 HttpURLConnection 直接抛 IOException(Sonos 探测/DLNA 控制全挂)。
+             出站请求均经 LanHttp.pinLanUrl 限定 RFC1918 内网,故无额外暴露。 -->
 
         <!-- 产品 UI 入口（Compose / Aurora） -->
         <activity
