@@ -99,6 +99,8 @@ data class Strings(
     val forceAlacTitle: String,     // 强制 ALAC 编码
     val forceAlacSub: String,       // Sonos 等只收 ALAC 的设备…
     val codecLabel: String,         // 编码 / Codec（投送时显示当前编码）
+    val sonosWavTitle: String,      // Sonos 改投 WAV
+    val sonosWavSub: String,        // AAC 不出声时打开…
 )
 
 private val ZH = Strings(
@@ -117,7 +119,7 @@ private val ZH = Strings(
     supportTitle = "支持设备", supportSub = "支持 AirPlay 协议的设备",
     howTitle = "投送说明", howSub = "投送时手机媒体音量自动压低，仅 AirPlay 设备出声",
     debugTitle = "调试 · 验证点", debugSub = "开发者调试入口",
-    version = "AirSonic · 版本 0.2.10", language = "语言",
+    version = "AirSonic · 版本 0.2.11", language = "语言",
     back = "返回", device = "设备",
     castingTo = "正在投送 ·", stop = "停止投送",
     connecting = "正在连接", stopped = "已停止", playFinished = "播放完成",
@@ -140,6 +142,8 @@ private val ZH = Strings(
     forceAlacTitle = "强制 ALAC 编码",
     forceAlacSub = "Sonos 等只收 ALAC 的设备打开;HomePod 走自动探测不受影响",
     codecLabel = "编码",
+    sonosWavTitle = "Sonos 改投 WAV",
+    sonosWavSub = "Sonos 投送 AAC 不出声时打开(改投无压缩 WAV 流,更兼容)",
 )
 
 private val EN = Strings(
@@ -158,7 +162,7 @@ private val EN = Strings(
     supportTitle = "Supported devices", supportSub = "Any AirPlay-compatible device",
     howTitle = "How it works", howSub = "Phone media volume is lowered while casting; sound plays on the AirPlay device only",
     debugTitle = "Debug · Test points", debugSub = "Developer entry",
-    version = "AirSonic · Version 0.2.10", language = "Language",
+    version = "AirSonic · Version 0.2.11", language = "Language",
     back = "Back", device = "Device",
     castingTo = "Casting ·", stop = "Stop casting",
     connecting = "Connecting to", stopped = "Stopped", playFinished = "Playback finished",
@@ -181,6 +185,8 @@ private val EN = Strings(
     forceAlacTitle = "Force ALAC",
     forceAlacSub = "Enable for Sonos-type devices that only accept ALAC; HomePod uses auto-detect and is unaffected",
     codecLabel = "Codec",
+    sonosWavTitle = "Sonos: cast WAV",
+    sonosWavSub = "Enable if Sonos casting is silent with AAC (uncompressed WAV stream, most compatible)",
 )
 
 object L10n {

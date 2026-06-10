@@ -663,6 +663,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
         SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
         ForceAlacRow()
+        SonosWavRow()
         UpdateRow()
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
         Spacer(Modifier.height(16.dp))
@@ -696,6 +697,31 @@ private fun ForceAlacRow() {
         }
         Spacer(Modifier.width(8.dp))
         Switch(checked = on, onCheckedChange = { CastEngine.setForceAlac(ctx, it) })
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+/** 「Sonos 改投 WAV」开关行：AAC 电台流不出声时的兼容兜底（无压缩 WAV 流）。 */
+@Composable
+private fun SonosWavRow() {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    val on = CastEngine.sonosWav.value
+    Row(
+        Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Speaker, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(s.sonosWavTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(s.sonosWavSub, color = Aurora.TextDim, fontSize = 12.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        Switch(checked = on, onCheckedChange = { CastEngine.setSonosWav(ctx, it) })
     }
     Spacer(Modifier.height(12.dp))
 }

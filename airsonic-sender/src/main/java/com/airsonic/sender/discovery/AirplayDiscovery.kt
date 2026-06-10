@@ -42,10 +42,15 @@ class AirplayDiscovery(context: Context) {
     // NsdManager 同一时刻只允许一个 resolveService 在飞；并发会 FAILURE_ALREADY_ACTIVE。
     // 原实现失败不重试 → 多台设备同时出现时部分永久解析不出来（设备时隐时现）。
     // 改为单线程队列逐个解析 + 失败重试，根治。
+    //
+    // 代际隔离：stop→start 快速重启时，旧 worker 可能还阻塞在 poll/await 没退出；
+    // 若用共享布尔标志，新 start 把它设回 true 会让旧线程「复活」→ 双 worker 并发 resolve
+    // → FAILURE_ALREADY_ACTIVE 回归。每个 worker 绑定自己的代号，代号失效即退出。
     private val resolveQueue = LinkedBlockingQueue<NsdServiceInfo>()
     private val queuedNames = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var resolveWorker: Thread? = null
-    @Volatile private var resolveRunning = false
+    private val workerGen = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var activeGen = 0
 
     /**
      * 启动（或刷新）发现。可重复调用：若已在发现中，则发起一次**干净重启**——
@@ -72,6 +77,10 @@ class AirplayDiscovery(context: Context) {
         startResolveWorker()
         val l = object : NsdManager.DiscoveryListener {
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                // 必须清状态：否则 listener 残留，后续 start() 全走「重启」路径
+                // 对一个从未 started 的 listener 调 stop → onDiscoveryStopped 永不来 → 发现永久卡死。
+                if (discoveryListener === this) discoveryListener = null
+                restartPending = false
                 userListener?.onDiscoveryFailed("onStartDiscoveryFailed code=$errorCode")
             }
 
@@ -129,21 +138,27 @@ class AirplayDiscovery(context: Context) {
     }
 
     private fun startResolveWorker() {
-        if (resolveWorker != null) return
-        resolveRunning = true
-        resolveWorker = thread(isDaemon = true, name = "airsonic-nsd-resolve") {
-            while (resolveRunning) {
-                val info = resolveQueue.poll(1, TimeUnit.SECONDS) ?: continue
-                resolveOneBlocking(info)
-                queuedNames.remove(info.serviceName)   // 解析完成后放行，设备再现可重解析
+        val w = resolveWorker
+        if (w != null && w.isAlive && activeGen == workerGen.get()) return   // 当前代 worker 仍在跑
+        val gen = workerGen.incrementAndGet()
+        activeGen = gen
+        resolveWorker = thread(isDaemon = true, name = "airsonic-nsd-resolve-$gen") {
+            try {
+                while (gen == workerGen.get()) {
+                    val info = resolveQueue.poll(1, TimeUnit.SECONDS) ?: continue
+                    resolveOneBlocking(info, gen)
+                    queuedNames.remove(info.serviceName)   // 解析完成后放行，设备再现可重解析
+                }
+            } catch (_: InterruptedException) {
+                // stop() interrupt：直接退出
             }
         }
     }
 
     /** 串行解析一个服务，失败重试至多 3 次（含 FAILURE_ALREADY_ACTIVE）；阻塞到回调或超时。 */
-    private fun resolveOneBlocking(info: NsdServiceInfo) {
+    private fun resolveOneBlocking(info: NsdServiceInfo, gen: Int) {
         var attempt = 0
-        while (resolveRunning && attempt < 3) {
+        while (gen == workerGen.get() && attempt < 3) {
             attempt++
             val latch = CountDownLatch(1)
             var ok = false
@@ -164,18 +179,24 @@ class AirplayDiscovery(context: Context) {
             }
             if (!latch.await(6, TimeUnit.SECONDS)) Log.w(TAG, "resolve await timeout name=${info.serviceName}")
             if (ok) return
-            runCatching { Thread.sleep(300) }   // 退避后重试
+            Thread.sleep(500)   // 退避后重试（覆盖跨代残留的 in-flight resolve 完成窗口）
         }
     }
 
     private fun stopResolveWorker() {
-        resolveRunning = false
+        workerGen.incrementAndGet()        // 使旧代失效：阻塞中的旧 worker 醒来即自行退出
+        resolveWorker?.interrupt()         // 提前打断 poll/await，加速退出
         resolveWorker = null
         resolveQueue.clear()
         queuedNames.clear()
     }
 
     private fun toAirDevice(info: NsdServiceInfo): AirDevice {
+        // resolve 可能给回 IPv6（带 scope 的 hostAddress 后续 HTTP/探测全不可用）。
+        // compileSdk 33 没有 hostAddresses 可选 IPv4，先把这种情况显式暴露在日志里。
+        if (info.host is java.net.Inet6Address) {
+            Log.w(TAG, "resolved IPv6 host for ${info.serviceName}: ${info.host?.hostAddress} (probe/HTTP 可能不可用)")
+        }
         val txt = parseTxt(info)
         val features = txt["features"] ?: txt["ft"]
         val model = txt["model"] ?: txt["am"] ?: ""

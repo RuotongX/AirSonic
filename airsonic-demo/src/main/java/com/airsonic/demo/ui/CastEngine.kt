@@ -52,14 +52,17 @@ object CastEngine {
 
     /** 强制使用 ALAC 编码（Sonos 等只收 ALAC 的设备调试用；持久化）。HomePod 走自动探测不受影响。 */
     val forceAlac = mutableStateOf(false)
+    /** Sonos 直播改投无限长 WAV（AAC 电台管线不出声时的兼容兜底；持久化）。 */
+    val sonosWav = mutableStateOf(false)
     /** 当前会话实际使用的音频编码标签（"ALAC"/"PCM"），供 UI 调试显示。 */
     val activeCodec = mutableStateOf("")
 
     private const val PREFS = "airsonic_prefs"
 
     fun loadPrefs(context: Context) {
-        forceAlac.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean("force_alac", false)
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        forceAlac.value = p.getBoolean("force_alac", false)
+        sonosWav.value = p.getBoolean("sonos_wav", false)
     }
 
     fun setForceAlac(context: Context, v: Boolean) {
@@ -68,8 +71,17 @@ object CastEngine {
             .putBoolean("force_alac", v).apply()
     }
 
+    fun setSonosWav(context: Context, v: Boolean) {
+        sonosWav.value = v
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("sonos_wav", v).apply()
+    }
+
     private var discovery: AirplayDiscovery? = null
     @Volatile private var casting = false
+    /** 会话代号：每次开始投送 +1。旧会话的 worker/finally 凭代号判断自己是否已被新会话接管，
+     *  避免「停止→立即重投」时旧会话的 cleanup 把新会话的前台服务/状态掐死。 */
+    @Volatile private var sessionGen = 0
     private var capture: SystemAudioCapture? = null
     private var worker: Thread? = null
     private var savedVolume: Int = -1
@@ -130,7 +142,10 @@ object CastEngine {
                 // 发现期不再起探测线程，避免给本就脆弱的 NsdManager 发现添乱。
             }
             override fun onDeviceLost(device: AirDevice) {
-                devices.removeAll { it.id == device.id }
+                // NsdManager 的 onServiceLost 是未解析回调（host=null/port=0 → id=":0"），
+                // 按 id 永远匹配不到 → 幽灵设备。mDNS 里服务名才是身份，按 name 删。
+                devices.removeAll { it.name == device.name }
+                if (selected.value?.name == device.name) selected.value = null
             }
             override fun onDiscoveryFailed(reason: String) {
                 statusLine.value = "${L10n.s.discoverFail}$reason"
@@ -173,6 +188,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
+        val gen = ++sessionGen
         CaptureProjectionService.start(app)
         worker = thread(name = "airsonic-cast", isDaemon = true) {
             var cap: SystemAudioCapture? = null
@@ -184,15 +200,17 @@ object CastEngine {
                 val cc = SystemAudioCapture(); cap = cc
                 if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
                 capture = cc
-                // Sonos：走 UPnP 实时 AAC 流（不进 AirPlay）。
+                // Sonos：走 UPnP 实时流（不进 AirPlay）。
                 // 发现阶段的 :1400 探测时好时坏（浏览器证 :1400 可达且快），故在投送时对「未知类型」
                 // 设备多探几次把它探可靠；已识别的 AirPlay 设备（HomePod/AppleTV/Mac/小米）跳过，不增延迟。
+                // SSDP 发现的 DLNA 条目（Sonos 会同时以两种形态出现）同样探 :1400 归位。
                 val sonosCtl: String? = when {
                     device.type == DeviceType.SONOS && device.controlUrl != null -> device.controlUrl
-                    device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN -> {
+                    device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN
+                        || device.type == DeviceType.DLNA -> {
                         var c: String? = null
                         repeat(4) {
-                            if (c == null && device.host.isNotEmpty()) {
+                            if (c == null && device.host.isNotEmpty() && casting && gen == sessionGen) {
                                 c = com.airsonic.sender.dlna.probeSonos(device.host, connectTimeoutMs = 3000, readTimeoutMs = 3000)
                                 if (c == null) Thread.sleep(500)
                             }
@@ -201,9 +219,13 @@ object CastEngine {
                     }
                     else -> null
                 }
+                if (!casting || gen != sessionGen) return@thread
                 if (sonosCtl != null) {
-                    startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl))
+                    startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl), gen)
                     return@thread
+                }
+                if (device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN || device.type == DeviceType.DLNA) {
+                    android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} → falling back to AirPlay (Sonos 设备此路不通)")
                 }
                 val (session, result) = connect(app, device)
                     ?: run { fail(L10n.s.setupFail); return@thread }
@@ -211,7 +233,7 @@ object CastEngine {
                 onCastingStarted(device.name)
                 session.streamCapturedPcm(
                     result = result, channels = 2,
-                    isCancelled = { !casting },
+                    isCancelled = { !casting || gen != sessionGen },
                     nextChunk = {
                         val c = cc.readChunk(4096)
                         if (c != null && c.size >= 64) level.value = peakOf(c)
@@ -221,7 +243,7 @@ object CastEngine {
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}")
             } finally {
-                cleanup(app, cap)
+                cleanup(app, cap, gen)
             }
         }
     }
@@ -235,6 +257,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
+        val gen = ++sessionGen
         worker = thread(name = "airsonic-filecast", isDaemon = true) {
             var pfd: ParcelFileDescriptor? = null
             try {
@@ -243,13 +266,13 @@ object CastEngine {
                 pfd = app.contentResolver.openFileDescriptor(uri, "r") ?: run { fail(L10n.s.openFail); return@thread }
                 mutePhone(app)
                 onCastingStarted(device.name)
-                session.streamAudio(result, pfd.fileDescriptor, realtimePacing = true, isCancelled = { !casting }) {}
-                if (casting) statusLine.value = L10n.s.playFinished
+                session.streamAudio(result, pfd.fileDescriptor, realtimePacing = true, isCancelled = { !casting || gen != sessionGen }) {}
+                if (casting && gen == sessionGen) statusLine.value = L10n.s.playFinished
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}")
             } finally {
                 runCatching { pfd?.close() }
-                cleanup(app, null)
+                cleanup(app, null, gen)
             }
         }
     }
@@ -263,6 +286,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = true
+        val gen = ++sessionGen
         worker = thread(name = "airsonic-video", isDaemon = true) {
             try {
                 val src = ContentResolverRangeSource(app, uri)
@@ -277,7 +301,7 @@ object CastEngine {
                 videoCtl = ctl
                 if (!ctl.play(url, 0.0)) { fail(L10n.s.setupFail); return@thread }
                 onCastingStarted(device.name)
-                while (casting) {
+                while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
                     val info = ctl.playbackInfo() ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
@@ -285,7 +309,7 @@ object CastEngine {
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}")
             } finally {
-                videoCleanup()
+                videoCleanup(gen)
             }
         }
     }
@@ -297,6 +321,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = isVideoFile
+        val gen = ++sessionGen
         worker = thread(name = "airsonic-dlna", isDaemon = true) {
             try {
                 val src = ContentResolverRangeSource(app, uri)
@@ -310,7 +335,7 @@ object CastEngine {
                 if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
                 if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return@thread }
                 onCastingStarted(device.name)
-                while (casting) {
+                while (casting && gen == sessionGen) {
                     Thread.sleep(1000)
                     val info = ctl.getPositionInfo() ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
@@ -318,58 +343,78 @@ object CastEngine {
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}")
             } finally {
-                dlnaCleanup()
+                dlnaCleanup(gen)
             }
         }
     }
 
-    /** Sonos：捕获 PCM → AAC 实时流 → LiveAudioHttpServer → UPnP SetAVTransportURI+Play。 */
-    private fun startSonosAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice) {
+    /**
+     * Sonos：捕获 PCM → 实时流 → LiveAudioHttpServer → UPnP SetAVTransportURI+Play。
+     * 默认 AAC 经「电台管线」（x-rincon-mp3radio:// + SoCo 同款电台 DIDL——新固件拒裸 http 电台 URI）；
+     * 开了 [sonosWav] 则改投无限长 WAV「超长曲目」（假大 Content-Length，swyh-rs 同款兜底）。
+     */
+    private fun startSonosAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice, gen: Int) {
         val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
+        val wav = sonosWav.value
         var live: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
         var enc: com.airsonic.sender.streaming.AacStreamEncoder? = null
+        var ctl: DlnaController? = null
         try {
-            val server = com.airsonic.sender.streaming.LiveAudioHttpServer()
+            val server = if (wav)
+                com.airsonic.sender.streaming.LiveAudioHttpServer(
+                    contentType = "audio/wav", pathExt = "wav",
+                    fakeContentLength = 0xFFFFFFFFL,
+                    streamHeader = com.airsonic.sender.streaming.wavStreamHeader(44100, 2, 16),
+                )
+            else com.airsonic.sender.streaming.LiveAudioHttpServer()
             val port = server.start(); live = server
             val localIp = localIpForTarget(device.host) ?: run { fail("${L10n.s.castError}no ip"); return }
-            val url = "http://$localIp:$port${server.path}"
-            val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
-                sampleRate = 44100, channels = 2
-            ) { frame -> server.push(frame) }
-            encoder.start(); enc = encoder
+            val httpUrl = "http://$localIp:$port${server.path}"
+            if (!wav) {
+                val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
+                    sampleRate = 44100, channels = 2
+                ) { frame -> server.push(frame) }
+                encoder.start(); enc = encoder
+            }
 
-            val didl = com.airsonic.sender.dlna.buildLiveAudioDidl(device.name, url)
-            val ctl = DlnaController(controlUrl); dlnaCtl = ctl
-            if (!ctl.setUri(url, didl)) { fail("${L10n.s.castError}${ctl.lastError}"); return }
-            if (!ctl.play()) { fail("${L10n.s.castError}${ctl.lastError}"); return }
-            // 把流地址记一处（诊断：确认下发给 Sonos 的拉流 URL 与本机网段）。
-            statusLine.value = "流: http://$localIp:$port${server.path}"
+            val castUri = if (wav) httpUrl else com.airsonic.sender.dlna.sonosRadioUri(httpUrl)
+            val didl = if (wav) com.airsonic.sender.dlna.buildLiveWavDidl(device.name, httpUrl)
+                       else com.airsonic.sender.dlna.buildSonosRadioDidl(device.name)
+            val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
+            if (!casting || gen != sessionGen) return
+            if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}"); return }
+            if (!c.play()) { fail("${L10n.s.castError}${c.lastError}"); return }
             // 不静音手机：Sonos 路径下手机是「捕获源」而非竞争输出，
             // 把 STREAM_MUSIC 压到 0 会在 EMUI/华为上把被捕获的 App 一起静掉。
             onCastingStarted(device.name)
-            // 捕获 → 编码 → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
-            var diagTick = 0          // 每 ~50 帧(约1s)刷新一次诊断；getTransportInfo 是网络调用，不能逐帧打
-            while (casting) {
+            // 诊断走独立低频线程：getTransportInfo 是阻塞 SOAP（最坏 8s），
+            // 绝不能插在捕获热循环里（AudioRecord 缓冲仅几百毫秒，卡一次就 overrun 爆音/断流）。
+            val fmtLabel = if (wav) "WAV" else "AAC"
+            thread(isDaemon = true, name = "airsonic-sonos-diag") {
+                while (casting && gen == sessionGen && dlnaCtl === c) {
+                    activeCodec.value = "$fmtLabel｜S:${c.getTransportInfo() ?: "?"}｜流x${server.connections}｜$localIp:$port"
+                    runCatching { Thread.sleep(3000) }
+                }
+            }
+            // 捕获 → (编码) → 推流，直到停止（阻塞，让调用方 finally 统一 cleanup 捕获）
+            while (casting && gen == sessionGen) {
                 val pcm = cc.readChunk(4096) ?: break
                 if (pcm.isEmpty()) continue
                 level.value = peakOf(pcm)
-                encoder.encode(pcm)
-                if (++diagTick >= 50) {
-                    diagTick = 0
-                    // getTransportInfo 失败返回 null（不阻断循环）；连接数=Sonos 是否真来取流。
-                    activeCodec.value = "AAC｜S:${ctl.getTransportInfo() ?: "?"}｜流x${server.connections}｜$localIp:$port"
-                }
+                if (wav) server.push(pcm) else enc?.encode(pcm)
             }
         } catch (t: Throwable) {
             fail("${L10n.s.castError}${t.message}")
         } finally {
-            runCatching { dlnaCtl?.stop() }; dlnaCtl = null
+            runCatching { ctl?.stop() }
+            if (dlnaCtl === ctl) dlnaCtl = null   // 只清自己这代的控制器，别动新会话的
             runCatching { enc?.stop() }
             runCatching { live?.stop() }
         }
     }
 
-    private fun dlnaCleanup() {
+    private fun dlnaCleanup(gen: Int) {
+        if (gen != sessionGen) return     // 已被新会话接管：全局控制器/服务都归新会话所有
         casting = false
         runCatching { dlnaCtl?.stop() }; dlnaCtl = null
         runCatching { httpServer?.stop() }; httpServer = null
@@ -392,8 +437,13 @@ object CastEngine {
     fun stop() {
         casting = false
         runCatching { capture?.stop() }
-        runCatching { videoCtl?.stop() }
-        runCatching { dlnaCtl?.stop() }
+        // SOAP/RTSP 停止是阻塞网络调用，调用方是 Compose 主线程 → 必须切后台
+        // （直接调会 NetworkOnMainThreadException 被吞掉，等于没发）。
+        val v = videoCtl; val d = dlnaCtl
+        if (v != null || d != null) thread(isDaemon = true, name = "airsonic-stop") {
+            runCatching { v?.stop() }
+            runCatching { d?.stop() }
+        }
     }
 
     // ---- 内部 ----
@@ -410,9 +460,10 @@ object CastEngine {
         phase.value = CastPhase.ERROR
     }
 
-    private fun cleanup(app: Context, cap: SystemAudioCapture?) {
+    private fun cleanup(app: Context, cap: SystemAudioCapture?, gen: Int) {
+        runCatching { cap?.stop() }      // 自己的捕获器总要关
+        if (gen != sessionGen) return     // 已被新会话接管：别动全局状态/前台服务
         casting = false
-        runCatching { cap?.stop() }
         capture = null
         restorePhone(app)
         runCatching { CaptureProjectionService.stop(app) }
@@ -445,7 +496,8 @@ object CastEngine {
         return localWifiIp()
     }
 
-    private fun videoCleanup() {
+    private fun videoCleanup(gen: Int) {
+        if (gen != sessionGen) return     // 已被新会话接管
         casting = false
         runCatching { videoCtl?.stop() }; runCatching { videoCtl?.close() }; videoCtl = null
         runCatching { httpServer?.stop() }; httpServer = null

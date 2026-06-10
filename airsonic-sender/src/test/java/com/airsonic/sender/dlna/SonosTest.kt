@@ -31,4 +31,31 @@ class SonosTest {
         assertTrue(didl.contains("http-get:*:audio/aac:*"))        // 最兼容裸 protocolInfo
         assertTrue(didl.contains("object.item.audioItem.audioBroadcast"))
     }
+
+    @Test fun radioUri_rewritesHttpScheme() {
+        assertEquals(
+            "x-rincon-mp3radio://10.0.0.2:9000/live.aac",
+            sonosRadioUri("http://10.0.0.2:9000/live.aac")
+        )
+        assertEquals(
+            "x-rincon-mp3radio://10.0.0.2/a",
+            sonosRadioUri("https://10.0.0.2/a")
+        )
+    }
+
+    @Test fun radioDidl_socoTemplate() {
+        val didl = buildSonosRadioDidl("AirSonic <Live>")
+        assertTrue(didl.contains("object.item.audioItem.audioBroadcast"))
+        assertTrue(didl.contains("SA_RINCON65031_"))                 // TuneIn 电台服务 token
+        assertTrue(didl.contains("""id="R:0/0/0""""))
+        assertTrue(didl.contains("AirSonic &lt;Live&gt;"))           // 标题已转义
+        assertFalse(didl.contains("<res"))                           // 电台模板不带 res
+    }
+
+    @Test fun wavDidl_musicTrackWithWavProtocolInfo() {
+        val didl = buildLiveWavDidl("AirSonic Live", "http://10.0.0.2:9000/live.wav")
+        assertTrue(didl.contains("object.item.audioItem.musicTrack"))
+        assertTrue(didl.contains("http-get:*:audio/wav:*"))
+        assertTrue(didl.contains("http://10.0.0.2:9000/live.wav"))
+    }
 }

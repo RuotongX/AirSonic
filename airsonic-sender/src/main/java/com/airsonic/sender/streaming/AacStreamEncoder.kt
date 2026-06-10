@@ -39,9 +39,16 @@ class AacStreamEncoder(
     fun encode(pcm: ByteArray) {
         val c = codec ?: return
         var offset = 0
+        var retried = false
         while (offset < pcm.size) {
             val inIdx = c.dequeueInputBuffer(10_000)
-            if (inIdx < 0) break
+            if (inIdx < 0) {
+                // 输入缓冲耗尽多因输出端积压：先取走输出再试一次，避免静默丢 PCM（咔哒声）
+                if (retried) break
+                retried = true
+                drain(c)
+                continue
+            }
             val inBuf: ByteBuffer = c.getInputBuffer(inIdx) ?: continue
             inBuf.clear()
             val n = minOf(inBuf.remaining(), pcm.size - offset)
