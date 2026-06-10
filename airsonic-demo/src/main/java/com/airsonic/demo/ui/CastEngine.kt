@@ -200,10 +200,22 @@ object CastEngine {
                 if (!cc.start(projection)) { fail(L10n.s.captureFail); return@thread }
                 capture = cc
                 // Sonos：走 UPnP 实时 AAC 流（不进 AirPlay）。
-                // 即时兜底探测——发现阶段没来得及/没识别成 Sonos 也能在此刻确认，路由不再依赖发现时序。
-                // 短超时：非 Sonos 设备（HomePod 无 :1400）最多多等约 1.5s。
-                val sonosCtl = device.controlUrl?.takeIf { device.type == DeviceType.SONOS }
-                    ?: com.airsonic.sender.dlna.probeSonos(device.host, connectTimeoutMs = 1500, readTimeoutMs = 1500)
+                // 发现阶段的 :1400 探测时好时坏（浏览器证 :1400 可达且快），故在投送时对「未知类型」
+                // 设备多探几次把它探可靠；已识别的 AirPlay 设备（HomePod/AppleTV/Mac/小米）跳过，不增延迟。
+                val sonosCtl: String? = when {
+                    device.type == DeviceType.SONOS && device.controlUrl != null -> device.controlUrl
+                    device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN -> {
+                        var c: String? = null
+                        repeat(4) {
+                            if (c == null && device.host.isNotEmpty()) {
+                                c = com.airsonic.sender.dlna.probeSonos(device.host, connectTimeoutMs = 3000, readTimeoutMs = 3000)
+                                if (c == null) Thread.sleep(500)
+                            }
+                        }
+                        c
+                    }
+                    else -> null
+                }
                 if (sonosCtl != null) {
                     startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl))
                     return@thread
