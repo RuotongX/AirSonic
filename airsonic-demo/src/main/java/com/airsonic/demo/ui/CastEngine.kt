@@ -20,7 +20,10 @@ import com.airsonic.sender.api.DeviceType
 import com.airsonic.sender.capture.SystemAudioCapture
 import com.airsonic.sender.discovery.AirplayDiscovery
 import com.airsonic.sender.discovery.DlnaDiscovery
+import com.airsonic.sender.discovery.pickLanIpForTarget
 import com.airsonic.sender.dlna.DlnaController
+import com.airsonic.sender.pairing.DeviceProbe
+import com.airsonic.sender.pairing.parseDeviceProbe
 import com.airsonic.sender.dlna.buildDidl
 import com.airsonic.sender.pairing.PairingHandshake
 import com.airsonic.sender.streaming.AirplayStreamSession
@@ -528,28 +531,18 @@ object CastEngine {
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
-    private fun localWifiIp(): String? = runCatching {
+    /** 枚举本机 IPv4（非回环）候选。选哪个交给纯函数 [pickLanIpForTarget]。 */
+    private fun localIpv4Candidates(): List<String> = runCatching {
         java.net.NetworkInterface.getNetworkInterfaces().toList()
             .flatMap { it.inetAddresses.toList() }
-            .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address && it.hostAddress?.startsWith("169.254") == false }
-            ?.hostAddress
-    }.getOrNull()
+            .filter { it is java.net.Inet4Address && !it.isLoopbackAddress }
+            .mapNotNull { it.hostAddress }
+    }.getOrDefault(emptyList())
 
-    /** 优先返回与 target 同 /24 网段的本机 IPv4（避免华为多网卡选错）；否则回退 localWifiIp()。 */
-    private fun localIpForTarget(target: String): String? {
-        val prefix = target.substringBeforeLast('.', "")
-        if (prefix.isNotEmpty()) {
-            val match = runCatching {
-                java.net.NetworkInterface.getNetworkInterfaces().toList()
-                    .flatMap { it.inetAddresses.toList() }
-                    .firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress &&
-                        it.hostAddress?.startsWith("$prefix.") == true }
-                    ?.hostAddress
-            }.getOrNull()
-            if (match != null) return match
-        }
-        return localWifiIp()
-    }
+    private fun localWifiIp(): String? = pickLanIpForTarget(localIpv4Candidates(), "")
+
+    /** 优先返回与 target 同 /24 网段的本机 IPv4（避免华为多网卡选错）；否则回退第一个可用。 */
+    private fun localIpForTarget(target: String): String? = pickLanIpForTarget(localIpv4Candidates(), target)
 
     private fun videoCleanup(
         gen: Int,
@@ -590,9 +583,7 @@ object CastEngine {
         savedVolume = -1
     }
 
-    data class DeviceProbe(val requiresAlac: Boolean, val requiresPin: Boolean)
-
-    /** 一次 GET /info 同时判：是否只收 ALAC、是否需要密码/PIN 配对。 */
+    /** 一次 GET /info 同时判：是否只收 ALAC、是否需要密码/PIN 配对。判定逻辑见 [parseDeviceProbe]。 */
     private fun probeDevice(host: String): DeviceProbe = runCatching {
         java.net.Socket().use { sock ->
             sock.connect(java.net.InetSocketAddress(host, 7000), 3000); sock.soTimeout = 3000
@@ -621,12 +612,7 @@ object CastEngine {
             if (headerEnd < 0) return@runCatching DeviceProbe(false, false)
             val end = if (contentLen >= 0) minOf(all.size, headerEnd + contentLen) else all.size
             val pl = BPlist.decode(all.copyOfRange(headerEnd, end)) as? Map<*, *> ?: return@runCatching DeviceProbe(false, false)
-            val saf = pl["supportedAudioFormatsExtended"] as? Map<*, *>
-            val codes = (saf?.get("audioStream") as? List<*>)?.mapNotNull { (it as? Long)?.toInt() ?: (it as? Int) } ?: emptyList()
-            val alac = codes.contains(18) && !codes.contains(11)
-            val sf = ((pl["statusFlags"] as? Number)?.toLong()) ?: 0L
-            val pin = (sf and 0x40L) != 0L || (sf and 0x8L) != 0L || (sf and 0x200L) != 0L
-            DeviceProbe(alac, pin)
+            parseDeviceProbe(pl)
         }
     }.getOrDefault(DeviceProbe(false, false))
 
@@ -688,16 +674,5 @@ object CastEngine {
         return attempt(preferAlac) ?: attempt(!preferAlac)
     }
 
-    private fun peakOf(pcm: ByteArray): Float {
-        var peak = 0
-        var i = 0
-        val n = minOf(pcm.size - 1, 2048)
-        while (i < n) {
-            val s = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)).toShort().toInt()
-            val a = if (s < 0) -s else s
-            if (a > peak) peak = a
-            i += 2
-        }
-        return (peak / 32767f).coerceIn(0f, 1f)
-    }
+    private fun peakOf(pcm: ByteArray): Float = com.airsonic.sender.streaming.pcmPeak(pcm)
 }
