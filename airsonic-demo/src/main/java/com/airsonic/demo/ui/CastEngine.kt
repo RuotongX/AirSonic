@@ -212,21 +212,23 @@ object CastEngine {
         val gen = ++sessionGen
         sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
         CaptureProjectionService.start(app)
-        worker = thread(name = "airsonic-cast", isDaemon = true) {
+        // 【T2 阶段3 已迁协程】MediaProjection 等待用 delay；探测/connect/streamCapturedPcm 全 withContext(IO)；
+        // Sonos 子流程 startSonosAudioStream 仍是阻塞 fun(pump 捕获热循环保留线程)，从 IO 调用。
+        sessionJob = engineScope.launch {
             var cap: SystemAudioCapture? = null
             var projection: android.media.projection.MediaProjection? = null
             try {
                 var waited = 0
-                while (!CaptureProjectionService.isForeground && waited < 2000) { Thread.sleep(50); waited += 50 }
-                val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                projection = pm.getMediaProjection(resultCode, data)
-                val cc = SystemAudioCapture(); cap = cc
-                if (!cc.start(projection)) { fail(L10n.s.captureFail, gen); return@thread }
-                capture = cc
-                // Sonos：走 UPnP 实时流（不进 AirPlay）。
-                // 发现阶段的 :1400 探测时好时坏（浏览器证 :1400 可达且快），故在投送时对「未知类型」
-                // 设备多探几次把它探可靠；已识别的 AirPlay 设备（HomePod/AppleTV/Mac/小米）跳过，不增延迟。
-                // SSDP 发现的 DLNA 条目（Sonos 会同时以两种形态出现）同样探 :1400 归位。
+                while (!CaptureProjectionService.isForeground && waited < 2000) { delay(50); waited += 50 }
+                val cc = withContext(Dispatchers.IO) {
+                    val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    val proj = pm.getMediaProjection(resultCode, data)
+                    projection = proj
+                    SystemAudioCapture().takeIf { it.start(proj) }
+                } ?: run { fail(L10n.s.captureFail, gen); return@launch }
+                cap = cc; capture = cc
+                // Sonos：走 UPnP 实时流（不进 AirPlay）。投送时对「未知/Sonos/DLNA」型设备探 :1400 归位，
+                // 已识别的 AirPlay 设备（HomePod/AppleTV/Mac/小米）跳过，不增延迟。
                 var probeReason = "skip"
                 val sonosCtl: String? = when {
                     device.type == DeviceType.SONOS && device.controlUrl != null -> device.controlUrl.also { probeReason = "preset" }
@@ -235,44 +237,47 @@ object CastEngine {
                         var c: String? = null
                         repeat(4) {
                             if (c == null && device.host.isNotEmpty() && casting && gen == sessionGen) {
-                                val (ctl, reason) = com.airsonic.sender.dlna.probeSonosWithReason(device.host, 3000, 3000)
+                                val (ctl, reason) = withContext(Dispatchers.IO) { com.airsonic.sender.dlna.probeSonosWithReason(device.host, 3000, 3000) }
                                 c = ctl; probeReason = reason
-                                if (c == null) Thread.sleep(500)
+                                if (c == null) delay(500)
                             }
                         }
                         c
                     }
                     else -> null
                 }
-                if (!casting || gen != sessionGen) return@thread
+                if (!isActive || !casting || gen != sessionGen) return@launch
                 if (sonosCtl != null) {
-                    startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl), gen)
-                    return@thread
+                    withContext(Dispatchers.IO) { startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl), gen) }
+                    return@launch
                 }
                 if (device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN || device.type == DeviceType.DLNA) {
                     android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} ($probeReason) → falling back to AirPlay")
                 }
-                val (session, result) = connect(app, device)
-                    ?: run { fail(L10n.s.setupFail, gen); return@thread }
-                // connect 可能阻塞很久（PIN 配对最长 120s）：返回后先确认会话没被接管再动全局状态
-                if (!casting || gen != sessionGen) return@thread
+                val pair = withContext(Dispatchers.IO) { connect(app, device) }
+                    ?: run { fail(L10n.s.setupFail, gen); return@launch }
+                val (session, result) = pair
+                if (!isActive || !casting || gen != sessionGen) return@launch   // connect(PIN)期间可能已被接管
                 mutePhone(app)
                 onCastingStarted(device.name)
-                // 路由诊断：走到这里＝没进 Sonos UPnP、回退了 AirPlay。把类型/host/探测原因打到投送页那行，便于定位。
                 activeCodec.value = "${activeCodec.value}｜t=${device.type}｜h=${device.host}｜1400=$probeReason"
-                session.streamCapturedPcm(
-                    result = result, channels = 2,
-                    isCancelled = { !casting || gen != sessionGen },
-                    nextChunk = {
-                        val c = cc.readChunk(4096)
-                        if (c != null && c.size >= 64) level.value = peakOf(c)
-                        c
-                    }
-                ) {}
+                withContext(Dispatchers.IO) {
+                    session.streamCapturedPcm(
+                        result = result, channels = 2,
+                        isCancelled = { !isActive || !casting || gen != sessionGen },
+                        nextChunk = {
+                            val c = cc.readChunk(4096)
+                            if (c != null && c.size >= 64) level.value = peakOf(c)
+                            c
+                        }
+                    ) {}
+                }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                cleanup(app, cap, projection, gen)
+                withContext(NonCancellable) { cleanup(app, cap, projection, gen) }
             }
         }
     }
