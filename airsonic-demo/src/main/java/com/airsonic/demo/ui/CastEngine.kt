@@ -57,8 +57,11 @@ object CastEngine {
     // ---- 投送状态 ----
     val phase = mutableStateOf(CastPhase.IDLE)
     val statusLine = mutableStateOf("")
+    const val SPECTRUM_BANDS = 24
     /** 实时音频幅度 0..1，驱动律动动图。 */
     val level = mutableStateOf(0f)
+    /** 实时频谱：[SPECTRUM_BANDS] 个对数频段幅度 0..1，驱动频谱可视化。 */
+    val spectrum = mutableStateOf(FloatArray(SPECTRUM_BANDS))
     /** 投送开始时刻（SystemClock.elapsedRealtime）；0=未投。用于时长计时。 */
     val startedAt = mutableStateOf(0L)
     /** 本次会话实际投送的设备名（会话期间锁定）。UI 必须显示它而非 selected——
@@ -71,6 +74,14 @@ object CastEngine {
     val sonosWav = mutableStateOf(true)
     /** 当前会话实际使用的音频编码标签（"ALAC"/"PCM"），供 UI 调试显示。 */
     val activeCodec = mutableStateOf("")
+
+    @Volatile private var meterTick = 0
+    /** 从捕获 PCM 更新律动+频谱；FFT 降频到每 2 块(~20fps)，不进推流高频热点。 */
+    private fun updateMeters(pcm: ByteArray) {
+        if (pcm.size < 64) return
+        level.value = peakOf(pcm)
+        if (meterTick++ % 2 == 0) spectrum.value = com.airsonic.sender.streaming.spectrumBands(pcm, SPECTRUM_BANDS)
+    }
 
     private const val PREFS = "airsonic_prefs"
 
@@ -266,7 +277,7 @@ object CastEngine {
                         isCancelled = { !isActive || !casting || gen != sessionGen },
                         nextChunk = {
                             val c = cc.readChunk(4096)
-                            if (c != null && c.size >= 64) level.value = peakOf(c)
+                            if (c != null) updateMeters(c)
                             c
                         }
                     ) {}
@@ -463,7 +474,7 @@ object CastEngine {
                     while (!pumpStop.get() && casting && gen == sessionGen) {
                         val pcm = cc.readChunk(4096) ?: break
                         if (pcm.isEmpty()) continue
-                        level.value = peakOf(pcm)
+                        updateMeters(pcm)
                         if (wav) server.push(pcm) else enc?.encode(pcm)
                     }
                 } catch (t: Throwable) {
@@ -510,7 +521,7 @@ object CastEngine {
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; castingDeviceName.value = ""
+        startedAt.value = 0L; level.value = 0f; spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
@@ -571,6 +582,7 @@ object CastEngine {
         runCatching { CaptureProjectionService.stop(app) }
         startedAt.value = 0L
         level.value = 0f
+        spectrum.value = FloatArray(SPECTRUM_BANDS)
         castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
@@ -604,7 +616,7 @@ object CastEngine {
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; castingDeviceName.value = ""
+        startedAt.value = 0L; level.value = 0f; spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 

@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -168,6 +169,33 @@ fun WaveBars(level: Float, modifier: Modifier = Modifier, bars: Int = 24) {
     }
 }
 
+/**
+ * 真·频谱条：读 [spectrum]（24 频段 0..1，来自 FFT）画对称柱，
+ * 每帧平滑——上升直接跟随、回落缓慢衰减（经典频谱视觉）。空闲(全 0)时退化为细线。
+ */
+@Composable
+fun SpectrumBars(spectrum: FloatArray, modifier: Modifier = Modifier) {
+    val display = remember { FloatArray(CastEngine.SPECTRUM_BANDS) }
+    var frame by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) { while (true) { withFrameNanos { frame = it } } }
+    val brush = Aurora.brandBrush
+    Canvas(modifier) {
+        @Suppress("UNUSED_EXPRESSION") frame   // 订阅帧时钟：驱动回落动画每帧重绘
+        val n = display.size
+        val w = size.width; val h = size.height
+        val gap = w / (n * 2.4f)
+        val barW = (w - gap * (n + 1)) / n
+        val baseY = h / 2f
+        for (i in 0 until n) {
+            val target = spectrum.getOrElse(i) { 0f }
+            display[i] = if (target >= display[i]) target else display[i] * 0.80f + target * 0.20f
+            val bh = (h * 0.92f * display[i]).coerceAtLeast(h * 0.03f)
+            val x = gap + i * (barW + gap) + barW / 2f
+            drawLine(brush, Offset(x, baseY - bh / 2), Offset(x, baseY + bh / 2), strokeWidth = barW, cap = StrokeCap.Round)
+        }
+    }
+}
+
 /** 顶部"当前设备"条 + 状态点。 */
 @Composable
 fun DeviceChip(name: String?, sub: String?, connected: Boolean, onClick: () -> Unit) {
@@ -208,7 +236,7 @@ fun ComingSoonTag(modifier: Modifier = Modifier) {
 
 /** 投送中浮层（设备名 + 时长 + 律动 + 停止）。 */
 @Composable
-fun CastingBar(deviceName: String, startedAt: Long, level: Float, onStop: () -> Unit) {
+fun CastingBar(deviceName: String, startedAt: Long, spectrum: FloatArray, onStop: () -> Unit) {
     AnimatedVisibility(visible = true) {
         Column(
             modifier = Modifier
@@ -221,7 +249,7 @@ fun CastingBar(deviceName: String, startedAt: Long, level: Float, onStop: () -> 
             Spacer(Modifier.height(6.dp))
             DurationText(startedAt)
             Spacer(Modifier.height(12.dp))
-            WaveBars(level = level, modifier = Modifier.fillMaxWidth().height(48.dp))
+            SpectrumBars(spectrum = spectrum, modifier = Modifier.fillMaxWidth().height(56.dp))
             Spacer(Modifier.height(14.dp))
             GlassButton(L10n.s.stop, onClick = onStop)
         }

@@ -567,7 +567,7 @@ private fun CastZone() {
     val status by CastEngine.statusLine
     val selected by CastEngine.selected
     val started by CastEngine.startedAt
-    val level by CastEngine.level
+    val spectrum by CastEngine.spectrum
     // 投送中显示会话锁定的设备名——selected 会被 mDNS 抖动清空/漂到别的设备(看着像"自动投到小米")
     val name = CastEngine.castingDeviceName.value.ifEmpty {
         selected?.let { DevicePrefs.displayName(ctx, it) } ?: L10n.s.device
@@ -577,7 +577,7 @@ private fun CastZone() {
         CastPhase.CASTING ->
             if (CastEngine.isVideo.value) VideoControlBar(name)
             else Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CastingBar(name, started, level) { CastEngine.stop() }
+                CastingBar(name, started, spectrum) { CastEngine.stop() }
                 val codec = CastEngine.activeCodec.value
                 if (codec.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
