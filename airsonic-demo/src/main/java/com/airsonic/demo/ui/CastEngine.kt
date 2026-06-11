@@ -96,17 +96,16 @@ object CastEngine {
     @Volatile private var casting = false
     /** 供前台服务判断会话是否仍在跑（进程被杀重启时决定 stopSelf）。 */
     val isActive: Boolean get() = casting
-    /** 会话代号：每次开始投送 +1。旧会话的 worker/finally 凭代号判断自己是否已被新会话接管，
-     *  避免「停止→立即重投」时旧会话的 cleanup 把新会话的前台服务/状态掐死。 */
+    /** 会话代号：每次开始投送 +1。保留的捕获/诊断线程(Sonos pump 等)凭它判断是否已被新会话接管而退出，
+     *  与协程的结构化取消并存(协程靠 sessionJob.cancel())。 */
     @Volatile private var sessionGen = 0
     private var capture: SystemAudioCapture? = null
-    private var worker: Thread? = null
     private var savedVolume: Int = -1
     private var httpServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
     private var dlnaDiscovery: DlnaDiscovery? = null
     @Volatile private var dlnaCtl: DlnaController? = null
-    // ---- T2 协程化（阶段1：DLNA 路径已迁移；其余路径仍走线程 + sessionGen，逐条迁移中）----
+    // ---- T2 协程化（四条投送路径全部迁 engineScope；仅 Sonos pump/诊断为保留线程，靠 casting/gen 退出）----
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var sessionJob: Job? = null
     val isVideo = mutableStateOf(false)
@@ -335,33 +334,37 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = true
         val gen = ++sessionGen
-        sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
-        worker = thread(name = "airsonic-video", isDaemon = true) {
+        sessionJob?.cancel()
+        // 【T2 阶段4 已迁协程】connect/play/进度轮询全 withContext(IO)/delay；停止=cancel。
+        sessionJob = engineScope.launch {
             var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
             var ctl: com.airsonic.sender.streaming.AirplayVideoController? = null
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = true)
-                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
+                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@launch }
                 server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
-                val port = server.start(); httpServer = server
-                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
+                val port = withContext(Dispatchers.IO) { server.start() }; httpServer = server
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${server.path}"
-                val hs = pairFor(app, device) ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@thread }
+                val hs = withContext(Dispatchers.IO) { pairFor(app, device) }
+                    ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@launch }
                 val c = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
                 ctl = c
-                if (!c.connect()) { fail(L10n.s.setupFail, gen); return@thread }
+                if (!withContext(Dispatchers.IO) { c.connect() }) { fail(L10n.s.setupFail, gen); return@launch }
                 videoCtl = c
-                if (!c.play(url, 0.0)) { fail(L10n.s.setupFail, gen); return@thread }
+                if (!withContext(Dispatchers.IO) { c.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
                 onCastingStarted(device.name)
-                while (casting && gen == sessionGen) {
-                    Thread.sleep(1000)
-                    val info = c.playbackInfo() ?: continue
+                while (isActive && casting && gen == sessionGen) {
+                    delay(1000)
+                    val info = withContext(Dispatchers.IO) { c.playbackInfo() } ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
                 }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                videoCleanup(gen, server, ctl)
+                withContext(NonCancellable) { videoCleanup(gen, server, ctl) }
             }
         }
     }
@@ -507,7 +510,7 @@ object CastEngine {
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; worker = null; castingDeviceName.value = ""
+        startedAt.value = 0L; level.value = 0f; castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
@@ -568,7 +571,6 @@ object CastEngine {
         runCatching { CaptureProjectionService.stop(app) }
         startedAt.value = 0L
         level.value = 0f
-        worker = null
         castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
@@ -602,7 +604,7 @@ object CastEngine {
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; worker = null; castingDeviceName.value = ""
+        startedAt.value = 0L; level.value = 0f; castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
