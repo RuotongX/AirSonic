@@ -37,7 +37,7 @@ class DlnaDiscovery(context: Context) {
         "M-SEARCH * HTTP/1.1\r\n" +
         "HOST: 239.255.255.250:1900\r\n" +
         "MAN: \"ssdp:discover\"\r\n" +
-        "MX: 2\r\n" +
+        "MX: 1\r\n" +                  // 设备随机延迟 0..MX 秒应答；2→1 直接砍半首响应等待
         "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
         ).toByteArray()
 
@@ -67,8 +67,9 @@ class DlnaDiscovery(context: Context) {
         var ticks = 0
         val buf = ByteArray(8192)
         while (running) {
-            // 每 ~5s 主动搜一次（首轮立即）
-            if (ticks % 5 == 0) runCatching {
+            // SSDP 走 UDP 会丢包：首 3 秒每秒补发一发（标准做法是重复 M-SEARCH），之后每 ~5s 一发。
+            // 丢一发不再要等 5s 下一轮——这是「DLNA 扫描慢」的主因之一。
+            if (ticks < 3 || ticks % 5 == 0) runCatching {
                 s.send(DatagramPacket(mSearch, mSearch.size, MCAST, PORT))
             }
             ticks++

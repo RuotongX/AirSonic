@@ -219,16 +219,39 @@ object BPlist {
         val topIndex = readLongBE(trailer, 16).toInt()
         val offsetTableStart = readLongBE(trailer, 24).toInt()
 
+        // trailer 来自对端（半信任）：负数/超大 numObjects 会 NegativeArraySize/OOM，
+        // offsetTable 越界会读飞——全部先校验再分配。对象数上限按「每对象至少 1 字节」给死。
+        require(offsetSize in 1..8 && refSize in 1..8) { "bplist trailer 宽度非法" }
+        require(numObjects in 1..data.size) { "bplist numObjects 非法: $numObjects" }
+        require(topIndex in 0 until numObjects) { "bplist topIndex 越界" }
+        require(offsetTableStart >= 8 &&
+            offsetTableStart.toLong() + numObjects.toLong() * offsetSize <= (data.size - 32).toLong()) {
+            "bplist offsetTable 越界"
+        }
+
         val offsets = IntArray(numObjects)
         for (i in 0 until numObjects) {
-            offsets[i] = readSizedInt(data, offsetTableStart + i * offsetSize, offsetSize).toInt()
+            val off = readSizedInt(data, offsetTableStart + i * offsetSize, offsetSize).toInt()
+            require(off in 8 until data.size - 32) { "bplist 对象偏移越界: $off" }
+            offsets[i] = off
         }
         val ctx = DecodeCtx(data, offsets, refSize)
         return ctx.readObject(topIndex)
     }
 
     private class DecodeCtx(val data: ByteArray, val offsets: IntArray, val refSize: Int) {
+        /** 防自引用环：递归深度上限（正常 AirPlay 响应嵌套远小于此）。 */
+        private var depth = 0
+
         fun readObject(index: Int): Any? {
+            require(index in offsets.indices) { "bplist 对象引用越界: $index" }
+            require(++depth <= 64) { "bplist 嵌套过深（疑似自引用环）" }
+            try {
+                return readObjectInner(index)
+            } finally { depth-- }
+        }
+
+        private fun readObjectInner(index: Int): Any? {
             var pos = offsets[index]
             val marker = data[pos].toInt() and 0xFF
             val type = marker and 0xF0
