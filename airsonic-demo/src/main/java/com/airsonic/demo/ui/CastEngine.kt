@@ -53,7 +53,7 @@ object CastEngine {
     /** 强制使用 ALAC 编码（Sonos 等只收 ALAC 的设备调试用；持久化）。HomePod 走自动探测不受影响。 */
     val forceAlac = mutableStateOf(false)
     /** Sonos 直播改投无限长 WAV（AAC 电台管线不出声时的兼容兜底；持久化）。 */
-    val sonosWav = mutableStateOf(false)
+    val sonosWav = mutableStateOf(true)
     /** 当前会话实际使用的音频编码标签（"ALAC"/"PCM"），供 UI 调试显示。 */
     val activeCodec = mutableStateOf("")
 
@@ -62,7 +62,7 @@ object CastEngine {
     fun loadPrefs(context: Context) {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         forceAlac.value = p.getBoolean("force_alac", false)
-        sonosWav.value = p.getBoolean("sonos_wav", false)
+        sonosWav.value = p.getBoolean("sonos_wav", true)
     }
 
     fun setForceAlac(context: Context, v: Boolean) {
