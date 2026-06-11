@@ -568,7 +568,10 @@ private fun CastZone() {
     val selected by CastEngine.selected
     val started by CastEngine.startedAt
     val level by CastEngine.level
-    val name = selected?.let { DevicePrefs.displayName(ctx, it) } ?: L10n.s.device
+    // 投送中显示会话锁定的设备名——selected 会被 mDNS 抖动清空/漂到别的设备(看着像"自动投到小米")
+    val name = CastEngine.castingDeviceName.value.ifEmpty {
+        selected?.let { DevicePrefs.displayName(ctx, it) } ?: L10n.s.device
+    }
     Spacer(Modifier.height(18.dp))
     when (phase) {
         CastPhase.CASTING ->

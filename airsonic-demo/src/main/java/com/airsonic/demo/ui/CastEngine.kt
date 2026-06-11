@@ -49,6 +49,9 @@ object CastEngine {
     val level = mutableStateOf(0f)
     /** 投送开始时刻（SystemClock.elapsedRealtime）；0=未投。用于时长计时。 */
     val startedAt = mutableStateOf(0L)
+    /** 本次会话实际投送的设备名（会话期间锁定）。UI 必须显示它而非 selected——
+     *  投送中 mDNS 抖动会让 selected 漂到别的设备，造成「自动投到小米」的假象。 */
+    val castingDeviceName = mutableStateOf("")
 
     /** 强制使用 ALAC 编码（Sonos 等只收 ALAC 的设备调试用；持久化）。HomePod 走自动探测不受影响。 */
     val forceAlac = mutableStateOf(false)
@@ -138,8 +141,9 @@ object CastEngine {
             override fun onDeviceFound(device: AirDevice) {
                 val idx = devices.indexOfFirst { it.id == device.id }
                 if (idx >= 0) devices[idx] = device else devices.add(device)
-                // 自动选中第一台可投设备（若尚未选）
-                if (selected.value == null && isCastable(device)) selected.value = device
+                // 自动选中第一台可投设备（若尚未选）。投送中禁止漂移：mDNS 抖动会把 selected
+                // 清空再选到别的设备，UI 看起来像「自动投到小米」。
+                if (selected.value == null && !casting && isCastable(device)) selected.value = device
                 // 注：Sonos 识别/路由改为「投送时即时探测 :1400」（见 startSystemAudioCast），
                 // 发现期不再起探测线程，避免给本就脆弱的 NsdManager 发现添乱。
             }
@@ -162,7 +166,7 @@ object CastEngine {
                 override fun onDeviceFound(device: AirDevice) {
                     val idx = devices.indexOfFirst { it.id == device.id }
                     if (idx >= 0) devices[idx] = device else devices.add(device)
-                    if (selected.value == null && isCastable(device)) selected.value = device
+                    if (selected.value == null && !casting && isCastable(device)) selected.value = device
                 }
                 override fun onDeviceLost(device: AirDevice) { devices.removeAll { it.id == device.id } }
                 override fun onDiscoveryFailed(reason: String) { /* DLNA 发现失败不打断 AirPlay */ }
@@ -460,7 +464,7 @@ object CastEngine {
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; worker = null
+        startedAt.value = 0L; level.value = 0f; worker = null; castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
@@ -492,6 +496,7 @@ object CastEngine {
     private fun onCastingStarted(name: String) {
         phase.value = CastPhase.CASTING
         statusLine.value = "${L10n.s.castingTo} $name"
+        castingDeviceName.value = name
         startedAt.value = android.os.SystemClock.elapsedRealtime()
     }
 
@@ -519,6 +524,7 @@ object CastEngine {
         startedAt.value = 0L
         level.value = 0f
         worker = null
+        castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
@@ -561,7 +567,7 @@ object CastEngine {
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
-        startedAt.value = 0L; level.value = 0f; worker = null
+        startedAt.value = 0L; level.value = 0f; worker = null; castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
     }
 
