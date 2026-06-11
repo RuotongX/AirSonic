@@ -186,6 +186,7 @@ object CryptoPrimitives {
 
             val k = hashInt(padN(N), padN(g))
             val u = hashInt(padN(A), padN(B))
+            require(u.mod(N) != BigInteger.ZERO) { "SRP: 非法 u（u==0）" }   // RFC 5054 要求
             val xInner = sha512(concat(username, byteArrayOf(':'.code.toByte()), password))
             val x = hashInt(salt.toMinimalBytes(), xInner)
 

@@ -66,6 +66,7 @@ class LiveAudioHttpServer(
 
     private fun serve(sock: Socket) {
         sock.use {
+            if (!isLanClient(sock.inetAddress)) return   // 只服务局域网/回环来源，拒公网嗅探
             sock.soTimeout = 5000   // 请求阶段限时：防半开连接把 serve 线程挂死在 readLine
             val ins = sock.getInputStream()
             val out = sock.getOutputStream()

@@ -39,6 +39,7 @@ class LocalMediaHttpServer(private val source: RangeSource) {
 
     private fun handle(sock: Socket) {
         sock.use {
+            if (!isLanClient(sock.inetAddress)) return   // 只服务局域网/回环来源，拒公网嗅探
             sock.soTimeout = 15000   // 防 slowloris/半开连接永久占住 handler 线程 + ContentResolver fd
             val ins = sock.getInputStream()
             val out = sock.getOutputStream()
