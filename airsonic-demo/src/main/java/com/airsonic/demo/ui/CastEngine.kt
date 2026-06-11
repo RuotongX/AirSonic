@@ -287,23 +287,35 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
         val gen = ++sessionGen
-        sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
-        worker = thread(name = "airsonic-filecast", isDaemon = true) {
+        sessionJob?.cancel()
+        // 【T2 阶段2 已迁协程】connect(含 PIN 配对,可阻塞 120s)与 streamAudio 全 withContext(IO)；
+        // 停止=cancel(且 stop() 里 cancelPin() 解开 PIN 等待)。
+        sessionJob = engineScope.launch {
             var pfd: ParcelFileDescriptor? = null
             try {
-                val (session, result) = connect(app, device)
-                    ?: run { fail(L10n.s.setupFail, gen); return@thread }
-                pfd = app.contentResolver.openFileDescriptor(uri, "r") ?: run { fail(L10n.s.openFail, gen); return@thread }
-                if (!casting || gen != sessionGen) return@thread   // connect(PIN 配对)期间可能已被新会话接管
+                val pair = withContext(Dispatchers.IO) { connect(app, device) }
+                    ?: run { fail(L10n.s.setupFail, gen); return@launch }
+                val (session, result) = pair
+                pfd = withContext(Dispatchers.IO) { app.contentResolver.openFileDescriptor(uri, "r") }
+                    ?: run { fail(L10n.s.openFail, gen); return@launch }
+                if (!isActive || !casting || gen != sessionGen) return@launch   // connect 期间可能已被接管
                 mutePhone(app)
                 onCastingStarted(device.name)
-                session.streamAudio(result, pfd.fileDescriptor, realtimePacing = true, isCancelled = { !casting || gen != sessionGen }) {}
-                if (casting && gen == sessionGen) statusLine.value = L10n.s.playFinished
+                val fd = pfd.fileDescriptor
+                withContext(Dispatchers.IO) {
+                    session.streamAudio(result, fd, realtimePacing = true,
+                        isCancelled = { !isActive || !casting || gen != sessionGen }) {}
+                }
+                if (isActive && casting && gen == sessionGen) statusLine.value = L10n.s.playFinished
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                runCatching { pfd?.close() }
-                cleanup(app, null, null, gen)
+                withContext(NonCancellable) {
+                    runCatching { pfd?.close() }
+                    cleanup(app, null, null, gen)
+                }
             }
         }
     }
@@ -508,7 +520,8 @@ object CastEngine {
 
     fun stop() {
         casting = false
-        sessionJob?.cancel()   // 协程路径(DLNA)：结构化取消，finally 在 NonCancellable 里清理
+        sessionJob?.cancel()   // 协程路径：结构化取消，finally 在 NonCancellable 里清理
+        cancelPin()            // 解开正在阻塞的 PIN 等待(poll 120s)，否则停止后会话挂着等 PIN
         runCatching { capture?.stop() }
         // SOAP/RTSP 停止是阻塞网络调用，调用方是 Compose 主线程 → 必须切后台
         // （直接调会 NetworkOnMainThreadException 被吞掉，等于没发）。
