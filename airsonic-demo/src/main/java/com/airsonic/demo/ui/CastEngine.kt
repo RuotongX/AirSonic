@@ -304,7 +304,18 @@ object CastEngine {
                 val fd = pfd.fileDescriptor
                 withContext(Dispatchers.IO) {
                     session.streamAudio(result, fd, realtimePacing = true,
-                        isCancelled = { !isActive || !casting || gen != sessionGen }) {}
+                        isCancelled = { !isActive || !casting || gen != sessionGen }) { step ->
+                        // 诊断：把推流关键步骤(Sync/controlPort/静音/推流/失败)打到投送页那行
+                        val m = when (step) {
+                            is AirplayStreamSession.Step.Info -> step.message
+                            is AirplayStreamSession.Step.Success -> step.message
+                            is AirplayStreamSession.Step.Failure -> "FAIL:${step.message}"
+                        }
+                        if (m.contains("Sync") || m.contains("controlPort") || m.contains("静音") ||
+                            m.contains("推流") || m.startsWith("FAIL")) {
+                            activeCodec.value = m.take(48)
+                        }
+                    }
                 }
                 if (isActive && casting && gen == sessionGen) statusLine.value = L10n.s.playFinished
             } catch (t: kotlinx.coroutines.CancellationException) {
