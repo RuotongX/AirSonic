@@ -438,7 +438,9 @@ object CastEngine {
             fail("${L10n.s.castError}${t.message}", gen)
         } finally {
             pumpStop.set(true)   // 先叫停 pump，再停编码器/服务，缩小 encode-after-release 竞窗
-            runCatching { ctl?.stop() }
+            // SOAP Stop 是阻塞网络请求(最长 connect3s+read10s)，切后台——否则挡住外层 cleanup，
+            // 用户点「停止」后 UI 要卡好几秒才变「已停止」。
+            ctl?.let { c2 -> thread(isDaemon = true, name = "airsonic-sonos-stop") { runCatching { c2.stop() } } }
             if (dlnaCtl === ctl) dlnaCtl = null   // 只清自己这代的控制器，别动新会话的
             runCatching { enc?.stop() }
             runCatching { live?.stop() }
@@ -450,7 +452,8 @@ object CastEngine {
         ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,
         ownCtl: DlnaController? = null,
     ) {
-        runCatching { ownCtl?.stop() }       // 无条件关自己建的，防 stale worker 早退泄漏 socket/连接
+        // 自己的资源无条件关；网络 Stop 切后台(阻塞 SOAP 会拖慢 UI 复位好几秒)
+        ownCtl?.let { c -> thread(isDaemon = true, name = "airsonic-dlna-stop") { runCatching { c.stop() } } }
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return        // 已被新会话接管：别动全局引用/UI 状态
         casting = false
@@ -548,7 +551,10 @@ object CastEngine {
         ownCtl: com.airsonic.sender.streaming.AirplayVideoController? = null,
     ) {
         // 先无条件关掉本 worker 自己建的 server/ctl（即使已被新会话接管，也要关自己的，否则 socket/连接泄漏）
-        runCatching { ownCtl?.stop() }; runCatching { ownCtl?.close() }
+        // RTSP stop 是阻塞网络请求 → 切后台，别挡 UI 复位；close 跟在 stop 后同线程做
+        ownCtl?.let { c -> thread(isDaemon = true, name = "airsonic-video-stop") {
+            runCatching { c.stop() }; runCatching { c.close() }
+        } }
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return     // 已被新会话接管：别动全局引用/UI 状态
         casting = false
