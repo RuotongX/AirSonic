@@ -29,6 +29,15 @@ import com.airsonic.sender.pairing.PairingHandshake
 import com.airsonic.sender.streaming.AirplayStreamSession
 import com.airsonic.sender.streaming.BPlist
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 投送阶段。 */
 enum class CastPhase { IDLE, CONNECTING, CASTING, ERROR }
@@ -97,6 +106,9 @@ object CastEngine {
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
     private var dlnaDiscovery: DlnaDiscovery? = null
     @Volatile private var dlnaCtl: DlnaController? = null
+    // ---- T2 协程化（阶段1：DLNA 路径已迁移；其余路径仍走线程 + sessionGen，逐条迁移中）----
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile private var sessionJob: Job? = null
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
     val videoDur = mutableStateOf(0.0)
@@ -198,6 +210,7 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
         val gen = ++sessionGen
+        sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
         CaptureProjectionService.start(app)
         worker = thread(name = "airsonic-cast", isDaemon = true) {
             var cap: SystemAudioCapture? = null
@@ -274,6 +287,7 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
         val gen = ++sessionGen
+        sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
         worker = thread(name = "airsonic-filecast", isDaemon = true) {
             var pfd: ParcelFileDescriptor? = null
             try {
@@ -304,6 +318,7 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = true
         val gen = ++sessionGen
+        sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
         worker = thread(name = "airsonic-video", isDaemon = true) {
             var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
             var ctl: com.airsonic.sender.streaming.AirplayVideoController? = null
@@ -334,7 +349,12 @@ object CastEngine {
         }
     }
 
-    /** DLNA 投送：起本地 HTTP 服务 → SetAVTransportURI + Play → 轮询进度。视频/音频同路径。 */
+    /**
+     * DLNA 投送：起本地 HTTP 服务 → SetAVTransportURI + Play → 轮询进度。视频/音频同路径。
+     * 【T2 阶段1 已迁协程】会话跑在 [engineScope] 上，停止 = sessionJob.cancel()（结构化取消），
+     * 阻塞 SOAP 全部 withContext(IO)；finally 在 NonCancellable 里清理。casting/gen 检查暂留，
+     * 与尚未迁移的线程路径互斥（迁完可删）。
+     */
     private fun startDlnaCast(context: Context, uri: Uri, device: AirDevice, isVideoFile: Boolean) {
         val app = context.applicationContext
         val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
@@ -342,30 +362,33 @@ object CastEngine {
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = isVideoFile
         val gen = ++sessionGen
-        worker = thread(name = "airsonic-dlna", isDaemon = true) {
+        sessionJob?.cancel()
+        sessionJob = engineScope.launch {
             var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
             var ctl: DlnaController? = null
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = isVideoFile)
-                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@thread }
+                if (src.length <= 0) { fail(L10n.s.openFail, gen); return@launch }
                 server = com.airsonic.sender.streaming.LocalMediaHttpServer(src)
-                val port = server.start(); httpServer = server
-                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@thread }
+                val port = withContext(Dispatchers.IO) { server.start() }; httpServer = server
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${server.path}"
                 val didl = buildDidl(device.name, url, src.mimeType, isVideoFile, sizeBytes = src.length)
                 val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
-                if (!c.setUri(url, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return@thread }
-                if (!c.play()) { fail("${L10n.s.castError}${c.lastError}", gen); return@thread }
+                if (!withContext(Dispatchers.IO) { c.setUri(url, didl) }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
+                if (!withContext(Dispatchers.IO) { c.play() }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
                 onCastingStarted(device.name)
-                while (casting && gen == sessionGen) {
-                    Thread.sleep(1000)
-                    val info = c.getPositionInfo() ?: continue
+                while (isActive && casting && gen == sessionGen) {
+                    delay(1000)
+                    val info = withContext(Dispatchers.IO) { c.getPositionInfo() } ?: continue
                     videoPos.value = info.first; videoDur.value = info.second
                 }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t   // 取消正常传播，别当错误
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                dlnaCleanup(gen, server, ctl)
+                withContext(NonCancellable) { dlnaCleanup(gen, server, ctl) }
             }
         }
     }
@@ -485,6 +508,7 @@ object CastEngine {
 
     fun stop() {
         casting = false
+        sessionJob?.cancel()   // 协程路径(DLNA)：结构化取消，finally 在 NonCancellable 里清理
         runCatching { capture?.stop() }
         // SOAP/RTSP 停止是阻塞网络调用，调用方是 Compose 主线程 → 必须切后台
         // （直接调会 NetworkOnMainThreadException 被吞掉，等于没发）。
