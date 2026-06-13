@@ -267,22 +267,25 @@ fun MainScreen(nav: NavHostController) {
 /** 大「屏幕镜像」hero 卡 —— AirSonic 自有品牌：青→品红渐变 + 原创声波标识。 */
 @Composable
 private fun MirrorHeroCard(animated: Boolean, onClick: () -> Unit) {
-    Box(
+    // 用 Row + weight 给文字预留独立宽度，标识用固定宽度——避免长副标题跑到标识下方重合。
+    Row(
         Modifier.fillMaxWidth().height(150.dp)
             .shadow(16.dp, RoundedCornerShape(28.dp), clip = false,
                 ambientColor = Aurora.Magenta.copy(alpha = 0.5f), spotColor = Aurora.Cyan.copy(alpha = 0.5f))
             .background(Aurora.brandBrush, RoundedCornerShape(28.dp))
             .clickable(onClick = onClick)
             .padding(28.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.align(Alignment.CenterStart)) {
+        Column(Modifier.weight(1f)) {
             Text(L10n.s.mirrorTitle, color = Color(0xFF071018), fontSize = 27.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(L10n.s.mirrorSub, color = Color(0xCC071018), fontSize = 13.sp)
         }
+        Spacer(Modifier.width(14.dp))
         // 原创 AirSonic 声波标识（深色，叠在品牌渐变上）
         AirSonicLogo(
-            modifier = Modifier.align(Alignment.CenterEnd).size(96.dp),
+            modifier = Modifier.size(84.dp),
             animated = animated,
             color = Color(0xFF071018),
         )

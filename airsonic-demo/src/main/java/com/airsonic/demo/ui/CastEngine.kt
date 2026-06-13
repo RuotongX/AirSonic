@@ -258,10 +258,16 @@ object CastEngine {
                 }
                 if (!isActive || !casting || gen != sessionGen) return@launch
                 if (sonosCtl != null) {
-                    withContext(Dispatchers.IO) { startSonosAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl), gen) }
+                    withContext(Dispatchers.IO) { startUpnpLiveAudioStream(app, cc, device.copy(type = DeviceType.SONOS, controlUrl = sonosCtl), gen, sonos = true) }
                     return@launch
                 }
-                if (device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN || device.type == DeviceType.DLNA) {
+                // 通用 DLNA 渲染器（坚果 N1S 等）：非 Sonos、非 AirPlay，但有 AVTransport 控制端点
+                // （「投本地」走的同一个）。系统音频走通用 UPnP 实时流，绝不能退回 AirPlay 配对（必失败）。
+                if (device.type == DeviceType.DLNA && device.controlUrl != null) {
+                    withContext(Dispatchers.IO) { startUpnpLiveAudioStream(app, cc, device, gen, sonos = false) }
+                    return@launch
+                }
+                if (device.type == DeviceType.SONOS || device.type == DeviceType.UNKNOWN) {
                     android.util.Log.w("CastEngine", ":1400 probe failed for ${device.host} ($probeReason) → falling back to AirPlay")
                 }
                 val pair = withContext(Dispatchers.IO) { connect(app, device) }
@@ -425,11 +431,12 @@ object CastEngine {
     }
 
     /**
-     * Sonos：捕获 PCM → 实时流 → LiveAudioHttpServer → UPnP SetAVTransportURI+Play。
-     * 默认 AAC 经「电台管线」（x-rincon-mp3radio:// + SoCo 同款电台 DIDL——新固件拒裸 http 电台 URI）；
-     * 开了 [sonosWav] 则改投无限长 WAV「超长曲目」（假大 Content-Length，swyh-rs 同款兜底）。
+     * UPnP 实时音频：捕获 PCM → 实时流 → LiveAudioHttpServer → UPnP SetAVTransportURI+Play。
+     * [sonos]=true：Sonos 电台管线（x-rincon-mp3radio:// + SoCo 同款电台 DIDL——新固件拒裸 http 电台 URI）；
+     * [sonos]=false：通用 DLNA 渲染器（坚果等）——裸 http URL + 标准 audioBroadcast DIDL。
+     * 任一模式开了 [sonosWav] 都改投无限长 WAV「超长曲目」（假大 Content-Length，swyh-rs 同款兜底）。
      */
-    private fun startSonosAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice, gen: Int) {
+    private fun startUpnpLiveAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice, gen: Int, sonos: Boolean = true) {
         val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
         val wav = sonosWav.value
         var live: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
@@ -454,9 +461,18 @@ object CastEngine {
                 encoder.start(); enc = encoder
             }
 
-            val castUri = if (wav) httpUrl else com.airsonic.sender.dlna.sonosRadioUri(httpUrl)
-            val didl = if (wav) com.airsonic.sender.dlna.buildLiveWavDidl(device.name, httpUrl)
-                       else com.airsonic.sender.dlna.buildSonosRadioDidl(device.name)
+            // Sonos：电台管线（x-rincon-mp3radio + Rincon DIDL，新固件拒裸 http 电台 URI）。
+            // 通用 DLNA（坚果等）：裸 http URL + 标准 audioBroadcast DIDL，不能用 Sonos 私有 scheme。
+            val castUri = when {
+                wav -> httpUrl
+                sonos -> com.airsonic.sender.dlna.sonosRadioUri(httpUrl)
+                else -> httpUrl
+            }
+            val didl = when {
+                wav -> com.airsonic.sender.dlna.buildLiveWavDidl(device.name, httpUrl)
+                sonos -> com.airsonic.sender.dlna.buildSonosRadioDidl(device.name)
+                else -> com.airsonic.sender.dlna.buildLiveAudioDidl(device.name, httpUrl)
+            }
             val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
             if (!casting || gen != sessionGen) return
             // 提前暴露路由诊断：setUri 若超时也能看出控制端点/本机流地址是否合理（多网卡选错等）
