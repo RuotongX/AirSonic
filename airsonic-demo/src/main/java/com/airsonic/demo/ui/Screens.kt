@@ -593,25 +593,32 @@ private fun CastZone() {
 // ============ 屏幕镜像（音频优先） ============
 @Composable
 fun MirrorScreen(nav: NavHostController, actions: CastActions) {
-    var res by remember { mutableStateOf(0) }
-    var fps by remember { mutableStateOf(0) }
+    val ctx = LocalContext.current
     var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
     val phase by CastEngine.phase
     val s = L10n.s
-    val auto = if (L10n.lang.value == Lang.EN) "Auto" else "自动"
     ScreenScaffold(nav, s.mirrorTitle) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle(s.resolution); Spacer(Modifier.width(8.dp)); ComingSoonTag()
-        }
+        // 投画面（整屏）：应用自身不编码画面 → 调起系统无线投屏(Miracast)，由系统驱动投到电视/投影。
+        SectionTitle(s.mirrorPicture)
         Spacer(Modifier.height(8.dp))
-        Segmented(listOf(auto, "2K", "1080p", "720p"), res, enabled = false) { res = it }
-        Spacer(Modifier.height(18.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle(s.frameRate); Spacer(Modifier.width(8.dp)); ComingSoonTag()
+        Row(
+            Modifier.fillMaxWidth().glass(radius = 16)
+                .clickable { launchSystemCast(ctx) }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(s.screenMirrorTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(s.screenMirrorSub, color = Aurora.TextDim, fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier.background(Aurora.TextDim.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) { Text(s.tagSystem, color = Aurora.TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+            Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
         }
-        Spacer(Modifier.height(8.dp))
-        Segmented(listOf(auto, "60fps", "30fps"), fps, enabled = false) { fps = it }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(20.dp))
         SectionTitle(s.sound)
         Spacer(Modifier.height(8.dp))
         Row(
