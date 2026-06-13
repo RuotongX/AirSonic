@@ -97,6 +97,7 @@ data class Strings(
     val tagVideoAudio: String,      // 视频+音频 / Video+Audio
     val screenMirrorTitle: String,  // 屏幕镜像 / Screen mirroring
     val screenMirrorSub: String,    // 调起系统无线投屏…
+    val dlnaMirrorHint: String,     // 纯 DLNA 投影不支持系统镜像的提示
     val castSettingsUnavailable: String, // 未找到系统投屏设置
     val forceAlacTitle: String,     // 强制 ALAC 编码
     val forceAlacSub: String,       // Sonos 等只收 ALAC 的设备…
@@ -150,6 +151,7 @@ private val ZH = Strings(
     protoDlna = "DLNA / UPnP", protoDlnaSub = "智能电视 · 盒子 · Kodi",
     tagAudio = "音频", tagVideoAudio = "视频+音频",
     screenMirrorTitle = "屏幕镜像", screenMirrorSub = "调起系统无线投屏，镜像整个屏幕到电视(Miracast)",
+    dlnaMirrorHint = "⚠ 此设备(坚果等 DLNA 投影)不支持系统镜像；看视频请回首页用「视频」投文件，整屏镜像请用投影自带 App",
     castSettingsUnavailable = "本机未提供系统投屏设置",
     forceAlacTitle = "强制 ALAC 编码",
     forceAlacSub = "一般别开!普通音箱(小米等)强制 ALAC 会无声;只收 ALAC 的设备已自动探测",
@@ -209,6 +211,7 @@ private val EN = Strings(
     protoDlna = "DLNA / UPnP", protoDlnaSub = "Smart TV · Box · Kodi",
     tagAudio = "Audio", tagVideoAudio = "Video+Audio",
     screenMirrorTitle = "Screen mirroring", screenMirrorSub = "Open system wireless display to mirror your screen to a TV (Miracast)",
+    dlnaMirrorHint = "⚠ This device (DLNA projector, e.g. JMGO) has no system mirroring; to watch video, cast a file via Video on the home page, or use the projector's own app for full mirroring",
     castSettingsUnavailable = "System cast settings not available on this device",
     forceAlacTitle = "Force ALAC",
     forceAlacSub = "Usually keep OFF! Forcing ALAC silences PCM speakers (e.g. Xiaomi); ALAC-only devices are auto-detected",
