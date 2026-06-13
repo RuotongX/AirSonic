@@ -8,7 +8,10 @@ AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链�
 
 - **双协议投送**：AirPlay 与 DLNA/UPnP 设备出现在**同一个设备列表**里，按图标/标签区分，用户无感。
 - **AirPlay 音频**：向 HomePod / AirPlay 音箱投送本地音频（ALAC / PCM 自动选择）；完整 HomeKit M1–M6 + pair-verify（X25519 / HKDF / ChaCha20-Poly1305）。
+- **系统音频镜像**：捕获手机系统声音（任意 app / 网页）实时投到所选音箱 —— AirPlay 走 RAOP、**Sonos 走 UPnP 实时音频流**（「手机镜像」→「投声音」）。
+- **投画面（整屏镜像）**：App 自身只做音频，**画面镜像交由系统无线投屏（Miracast）** —— 「手机镜像」页一键调起系统投屏，投到电视/投影。
 - **DLNA 视频 + 音频**：向智能电视 / 盒子 / Kodi 等 MediaRenderer 投送本地视频/音频，支持播放/暂停/拖动/停止 + 进度（AVTransport SOAP）。
+- **实时频谱**：投送页跟着音乐跳动的 FFT 频谱条（纯 Kotlin Cooley-Tukey，无依赖）。
 - **设备发现**：mDNS（AirPlay `_airplay._tcp`）+ SSDP（DLNA `MediaRenderer`）实时发现局域网设备。
 - **设备管理**：每台设备可重命名、永久隐藏 / 取消隐藏（本地持久化）。
 - **本地媒体浏览器**：app 内浏览本机音视频并投送。
@@ -27,7 +30,7 @@ AirSonic/
 │       ├── discovery/   # AirplayDiscovery（mDNS）+ DlnaDiscovery（SSDP）+ SsdpParsing
 │       ├── pairing/     # AirPlay2 配对：TLV8 / X25519 / HKDF / ChaCha20 / 握手
 │       ├── dlna/        # DLNA：DlnaProtocol（SOAP/DIDL 纯函数）/ DlnaController / LanHttp（安全访问）
-│       └── streaming/   # RTP 音频、加密通道、视频会话控制、LocalMediaHttpServer
+│       └── streaming/   # RTP 音频、加密通道、视频会话控制、系统音频实时流、FFT 频谱、LocalMediaHttpServer
 └── airsonic-demo/     # 产品 app（Compose / Aurora UI）
     └── src/main/java/com/airsonic/demo/ui/
         ├── StudioActivity   # 入口
@@ -86,8 +89,10 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 
 | 协议 | 设备 | 内容 |
 |------|------|------|
-| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱、Apple TV、Mac | 音频（视频投 Apple TV 仍在攻坚） |
-| DLNA / UPnP | 智能电视、电视盒子、Kodi、PC 软渲染器 | 视频 + 音频 |
+| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱、Apple TV、Mac | 音频（本地文件 + 系统音频镜像；视频投 Apple TV 仍在攻坚） |
+| UPnP 实时流 | Sonos | 系统音频镜像（`x-rincon-mp3radio` 实时流） |
+| DLNA / UPnP | 智能电视、电视盒子、Kodi、PC 软渲染器 | 本地视频 + 音频 |
+| 系统无线投屏（Miracast） | 电视 / 投影（如坚果）等 Miracast 接收端 | 整屏画面镜像（由系统驱动，App 仅一键调起） |
 
 ## 📄 授权 / License
 
