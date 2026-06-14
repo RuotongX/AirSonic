@@ -22,7 +22,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import android.content.Context
 import com.airsonic.sender.api.AirDevice
-import com.airsonic.sender.api.DeviceType
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -600,7 +599,6 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
     val ctx = LocalContext.current
     var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
     val phase by CastEngine.phase
-    val selected by CastEngine.selected
     val s = L10n.s
     ScreenScaffold(nav, s.mirrorTitle) {
         // 投画面（整屏）：应用自身不编码画面 → 调起系统无线投屏(Miracast)，由系统驱动投到电视/投影。
@@ -623,16 +621,15 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             ) { Text(s.tagSystem, color = Aurora.TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
             Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
         }
-        // 纯 DLNA 投影(坚果等)不广播 Miracast，系统投屏列表必为空 → 给死路一个路牌。
-        if (selected?.type == DeviceType.DLNA) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                s.dlnaMirrorHint,
-                color = Aurora.Magenta,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
+        // 系统投屏各家入口不一：App 跳到的 AOSP 投屏页在华为等机型可能是空页(不走 Cast+ 发现)，
+        // 华为自带「设置›更多连接›手机投屏」发现更全。给一句准确路牌，免得对空列表发懵。
+        Spacer(Modifier.height(8.dp))
+        Text(
+            s.systemCastHint,
+            color = Aurora.TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
         Spacer(Modifier.height(20.dp))
         SectionTitle(s.sound)
         Spacer(Modifier.height(8.dp))
