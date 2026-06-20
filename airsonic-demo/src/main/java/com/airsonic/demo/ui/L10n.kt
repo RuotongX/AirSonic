@@ -111,6 +111,7 @@ data class Strings(
     val privacyHeading: String,     // 隐私政策
     val privacyBody: String,
     val viewFullOnGitHub: String,   // 在 GitHub 查看完整条款
+    val volumeLabel: String,        // 投送中音量标签
 )
 
 private val ZH = Strings(
@@ -171,6 +172,7 @@ private val ZH = Strings(
         "网络/WLAN 权限仅用于在局域网内发现接收设备。唯一对外请求是可选的\"检查更新\"(读取 GitHub 公开 Release 信息)。" +
         "偏好设置与 AirPlay 配对凭据仅存于本机应用私有目录,卸载即清除。",
     viewFullOnGitHub = "在 GitHub 查看完整条款",
+    volumeLabel = "音量",
 )
 
 private val EN = Strings(
@@ -231,6 +233,7 @@ private val EN = Strings(
         "Network/Wi-Fi permissions are used solely to discover receivers on your LAN. The only outbound request is the optional \"Check for updates\" (reads public GitHub Release info). " +
         "Preferences and AirPlay pairing credentials are stored only in the app's private storage and removed on uninstall.",
     viewFullOnGitHub = "View full text on GitHub",
+    volumeLabel = "Volume",
 )
 
 object L10n {
