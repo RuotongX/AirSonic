@@ -560,6 +560,7 @@ object CastEngine {
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return        // 已被新会话接管：别动全局引用/UI 状态
         casting = false
+        unbindVolume()
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
@@ -664,6 +665,7 @@ object CastEngine {
         runCatching { projection?.stop() }           // MediaProjection 也要停，否则系统投屏指示常驻、干扰下次授权
         if (gen != sessionGen) return                // 已被新会话接管：别动全局状态/前台服务
         casting = false
+        unbindVolume()
         capture = null
         restorePhone(app)
         runCatching { CaptureProjectionService.stop(app) }
@@ -700,6 +702,7 @@ object CastEngine {
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return     // 已被新会话接管：别动全局引用/UI 状态
         casting = false
+        unbindVolume()
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
