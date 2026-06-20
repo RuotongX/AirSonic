@@ -113,6 +113,14 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 
 **隐私要点：AirSonic 没有服务器，不收集、不上传任何个人数据；所有媒体内容与控制指令只在你的局域网内传输。** 唯一的对外请求是可选的"检查更新"（读取 GitHub 公开 Release 信息）。应用设置页内也可直接查看以上两份文件。
 
+## 📬 联系 / 反馈 / Contact
+
+**Bug 反馈、使用问题、功能建议与商用授权，统一邮箱：[chunguangwee@gmail.com](mailto:chunguangwee@gmail.com)**
+Bug reports, questions, feature requests, and commercial licensing — all via **[chunguangwee@gmail.com](mailto:chunguangwee@gmail.com)**.
+
+> 应用内入口：**设置 › 用户协议与隐私 › 联系与反馈**，点邮箱即可直接撰写邮件。
+> In-app: **Settings › Terms & Privacy › Contact & feedback** — tap the address to compose an email.
+
 ## ⚠️ 说明
 
 本项目为学习 / 研究 AirPlay 与 DLNA/UPnP 协议而自研实现，不依赖任何商业 SDK，也不含任何 Apple 私有代码（DLNA 为开放标准）。

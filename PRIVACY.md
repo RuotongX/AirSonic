@@ -48,9 +48,10 @@ App 仅在本机本地保存少量**偏好设置**（如语言、"强制 ALAC""S
 
 隐私政策如有更新，将更新本文件的"生效日期"并通过新版本发布。
 
-## 7. 联系
+## 7. 联系与反馈
 
-问题请联系：**chunguangwee@gmail.com**
+隐私问题、Bug 反馈与建议，请联系：**chunguangwee@gmail.com**
+（应用内「设置 › 用户协议与隐私 › 联系与反馈」可直接发邮件。）
 
 ---
 
@@ -63,4 +64,4 @@ AirSonic casts audio/video to receivers (AirPlay / DLNA / Sonos) **within your l
 - The **only outbound request** is the optional "Check for updates", which reads public **GitHub Releases** info (governed by GitHub's own privacy policy) to fetch the latest APK; no personal data is sent.
 - A few local **preferences and AirPlay pairing credentials** are stored in the app's private storage and removed on uninstall.
 
-Contact: **chunguangwee@gmail.com**
+Contact / bug reports: **chunguangwee@gmail.com**

@@ -876,6 +876,7 @@ fun ProtocolsScreen(nav: NavHostController) {
 
 private const val TERMS_URL = "https://github.com/chunguangwei/AirSonic/blob/main/TERMS.md"
 private const val PRIVACY_URL = "https://github.com/chunguangwei/AirSonic/blob/main/PRIVACY.md"
+private const val CONTACT_EMAIL = "chunguangwee@gmail.com"
 
 /** 用户协议 + 隐私政策：应用内可离线阅读的摘要 + 跳 GitHub 看完整条款。 */
 @Composable
@@ -886,6 +887,33 @@ fun LegalScreen(nav: NavHostController) {
         LegalCard(s.termsHeading, s.termsBody, s.viewFullOnGitHub) { openUrl(ctx, TERMS_URL) }
         Spacer(Modifier.height(12.dp))
         LegalCard(s.privacyHeading, s.privacyBody, s.viewFullOnGitHub) { openUrl(ctx, PRIVACY_URL) }
+        Spacer(Modifier.height(12.dp))
+        ContactCard(s.contactHeading, s.contactBody, CONTACT_EMAIL) { openEmail(ctx, CONTACT_EMAIL) }
+    }
+}
+
+@Composable
+private fun ContactCard(heading: String, body: String, email: String, onEmail: () -> Unit) {
+    Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+        Text(heading, color = Aurora.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text(body, color = Aurora.TextSecondary, fontSize = 13.sp, lineHeight = 20.sp)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            email, color = Aurora.Cyan, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.clickable { onEmail() },
+        )
+    }
+}
+
+/** 用系统邮件 App 打开撰写界面（mailto），失败静默（无邮件 App 不崩）。 */
+private fun openEmail(ctx: android.content.Context, email: String) {
+    runCatching {
+        ctx.startActivity(
+            Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$email"))
+                .putExtra(Intent.EXTRA_SUBJECT, "AirSonic 反馈 / Bug")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }
 

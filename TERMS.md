@@ -43,9 +43,10 @@ AirSonic 是为学习与研究 AirPlay、DLNA/UPnP 等投送协议而自行实�
 
 本协议可能随版本更新而调整,继续使用即视为接受。你可随时卸载本 App 终止使用。
 
-## 8. 联系
+## 8. 联系与反馈
 
-问题请联系：**chunguangwee@gmail.com**
+问题、Bug 反馈、功能建议与商用授权，请联系：**chunguangwee@gmail.com**
+（应用内「设置 › 用户协议与隐私 › 联系与反馈」可直接发邮件。）
 
 ---
 
@@ -58,4 +59,4 @@ By using AirSonic you agree to these terms. AirSonic is a self-built, study/rese
 - AirSonic is **not affiliated with or endorsed by** Apple, Sonos, or any TV/receiver vendor; their names are trademarks of their owners, used only to describe compatibility. No guarantee of compatibility or results.
 - The software is provided **"AS IS", without warranty**; to the maximum extent permitted by law the author is **not liable** for any damages arising from its use.
 
-Contact: **chunguangwee@gmail.com**
+Contact / bug reports / feedback: **chunguangwee@gmail.com**

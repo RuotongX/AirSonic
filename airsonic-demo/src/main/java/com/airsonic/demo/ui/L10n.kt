@@ -107,6 +107,8 @@ data class Strings(
     val sonosWavSub: String,        // AAC 不出声时打开…
     val legalTitle: String,         // 用户协议与隐私
     val legalSub: String,           // 用户协议 · 隐私政策
+    val contactHeading: String,     // 联系与反馈
+    val contactBody: String,        // 反馈/Bug/商用 邮件入口说明
     val termsHeading: String,       // 用户协议
     val termsBody: String,
     val privacyHeading: String,     // 隐私政策
@@ -133,8 +135,8 @@ private val ZH = Strings(
     supportTitle = "支持设备", supportSub = "支持 AirPlay 协议的设备",
     howTitle = "投送说明", howSub = "投送时手机媒体音量自动压低，仅 AirPlay 设备出声",
     debugTitle = "调试 · 验证点", debugSub = "开发者调试入口",
-    version = "AirSonic · 版本 0.2.34",
-    licenseLine = "© 2026 Chunguang Wei · PolyForm Noncommercial 1.0.0\n仅限非商业使用，商业使用需作者书面授权",
+    version = "AirSonic · 版本 0.2.42",
+    licenseLine = "© 2026 Chunguang Wei · PolyForm Noncommercial 1.0.0\n仅限非商业使用，商业使用需作者书面授权\n联系 / Bug 反馈：chunguangwee@gmail.com",
     language = "语言",
     back = "返回", device = "设备",
     castingTo = "正在投送 ·", stop = "停止投送",
@@ -163,6 +165,8 @@ private val ZH = Strings(
     sonosWavSub = "默认开(无压缩,延迟更低);关闭改投 AAC 电台流(省带宽)",
     legalTitle = "用户协议与隐私",
     legalSub = "用户协议 · 隐私政策",
+    contactHeading = "联系与反馈",
+    contactBody = "商用授权、Bug 反馈与建议，都欢迎邮件联系作者：",
     termsHeading = "用户协议",
     termsBody = "AirSonic 是自研的投送工具,依 PolyForm 非商业许可授权,商用须作者书面同意。" +
         "请仅用于你拥有或已获授权的设备与媒体,不得用于侵犯他人著作权或隐私;投送、捕获、传播内容的责任由你自负。" +
@@ -195,8 +199,8 @@ private val EN = Strings(
     supportTitle = "Supported devices", supportSub = "Any AirPlay-compatible device",
     howTitle = "How it works", howSub = "Phone media volume is lowered while casting; sound plays on the AirPlay device only",
     debugTitle = "Debug · Test points", debugSub = "Developer entry",
-    version = "AirSonic · Version 0.2.34",
-    licenseLine = "© 2026 Chunguang Wei · PolyForm Noncommercial 1.0.0\nNoncommercial use only; commercial use requires written consent",
+    version = "AirSonic · Version 0.2.42",
+    licenseLine = "© 2026 Chunguang Wei · PolyForm Noncommercial 1.0.0\nNoncommercial use only; commercial use requires written consent\nContact / bug reports: chunguangwee@gmail.com",
     language = "Language",
     back = "Back", device = "Device",
     castingTo = "Casting ·", stop = "Stop casting",
@@ -225,6 +229,8 @@ private val EN = Strings(
     sonosWavSub = "On by default (uncompressed, lower latency); off = AAC radio stream (less bandwidth)",
     legalTitle = "Terms & Privacy",
     legalSub = "Terms of Use · Privacy Policy",
+    contactHeading = "Contact & feedback",
+    contactBody = "Commercial licensing, bug reports and suggestions — email the author:",
     termsHeading = "Terms of Use",
     termsBody = "AirSonic is a self-built casting tool licensed under PolyForm Noncommercial; commercial use requires the author's written consent. " +
         "Use it only with devices and media you own or are authorized to use; do not use it to infringe others' copyright or privacy — you are solely responsible for what you cast, capture, or share. " +
