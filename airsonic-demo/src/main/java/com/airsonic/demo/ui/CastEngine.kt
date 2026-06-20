@@ -26,6 +26,12 @@ import com.airsonic.sender.pairing.DeviceProbe
 import com.airsonic.sender.pairing.parseDeviceProbe
 import com.airsonic.sender.dlna.buildDidl
 import com.airsonic.sender.pairing.PairingHandshake
+import com.airsonic.sender.api.VolumeController
+import com.airsonic.sender.api.AirplayVolumeController
+import com.airsonic.sender.api.UpnpVolumeController
+import com.airsonic.sender.api.GainVolumeController
+import com.airsonic.sender.dlna.RenderingControlController
+import com.airsonic.sender.streaming.scalePcm16
 import com.airsonic.sender.streaming.AirplayStreamSession
 import com.airsonic.sender.streaming.BPlist
 import kotlin.concurrent.thread
@@ -116,6 +122,16 @@ object CastEngine {
     private var videoCtl: com.airsonic.sender.streaming.AirplayVideoController? = null
     private var dlnaDiscovery: DlnaDiscovery? = null
     @Volatile private var dlnaCtl: DlnaController? = null
+    @Volatile private var volumeController: VolumeController? = null
+    /** 投送中音量百分比 0..100，UI 滑块绑定。 */
+    val volumePct = mutableStateOf(50)
+    /** 是否静音。 */
+    val muted = mutableStateOf(false)
+    /** 是否已绑定音量后端（驱动 UI 控件显隐）。 */
+    val volumeActive = mutableStateOf(false)
+    /** 节流：拖动时最后值胜出，避免 SOAP/RTSP 往返被冲爆。 */
+    @Volatile private var pendingVolumePct: Int = -1
+    @Volatile private var volumeThrottleJob: Job? = null
     // ---- T2 协程化（四条投送路径全部迁 engineScope；仅 Sonos pump/诊断为保留线程，靠 casting/gen 退出）----
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var sessionJob: Job? = null
@@ -274,6 +290,7 @@ object CastEngine {
                     ?: run { fail(L10n.s.setupFail, gen); return@launch }
                 val (session, result) = pair
                 if (!isActive || !casting || gen != sessionGen) return@launch   // connect(PIN)期间可能已被接管
+                bindVolume(AirplayVolumeController(session), defaultPct = 50)
                 mutePhone(app)
                 onCastingStarted(device.name)
                 activeCodec.value = "${activeCodec.value}｜t=${device.type}｜h=${device.host}｜1400=$probeReason"
@@ -438,6 +455,8 @@ object CastEngine {
      */
     private fun startUpnpLiveAudioStream(app: Context, cc: SystemAudioCapture, device: AirDevice, gen: Int, sonos: Boolean = true) {
         val controlUrl = device.controlUrl ?: run { fail(L10n.s.setupFail); return }
+        val gainCtl: GainVolumeController? =
+            if (device.renderingControlUrl == null) GainVolumeController() else null
         val wav = sonosWav.value
         var live: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
         var enc: com.airsonic.sender.streaming.AacStreamEncoder? = null
@@ -475,6 +494,12 @@ object CastEngine {
             }
             val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
             if (!casting || gen != sessionGen) return
+            val rcUrl = device.renderingControlUrl
+            if (rcUrl != null) {
+                bindVolume(UpnpVolumeController(RenderingControlController(rcUrl)), defaultPct = 50)
+            } else {
+                bindVolume(gainCtl!!, defaultPct = 100)
+            }
             // 提前暴露路由诊断：setUri 若超时也能看出控制端点/本机流地址是否合理（多网卡选错等）
             val ctlHost = controlUrl.removePrefix("http://").substringBefore("/")
             activeCodec.value = "${if (wav) "WAV" else "AAC"}｜投…｜ctl=$ctlHost｜流=$localIp:$port"
@@ -491,6 +516,7 @@ object CastEngine {
                         val pcm = cc.readChunk(4096) ?: break
                         if (pcm.isEmpty()) continue
                         updateMeters(pcm)
+                        gainCtl?.let { scalePcm16(pcm, pcm.size, it.gain) }
                         if (wav) server.push(pcm) else enc?.encode(pcm)
                     }
                 } catch (t: Throwable) {
@@ -553,8 +579,53 @@ object CastEngine {
         videoCtl?.let { c -> thread(isDaemon = true) { c.scrub(sec) } }
     }
 
+    /** 绑定音量后端并按 getVolume 初始化滑块（读不到走默认）。在投送会话建立后调用。 */
+    private fun bindVolume(controller: VolumeController, defaultPct: Int) {
+        volumeController = controller
+        val cur = controller.getVolume()
+        val pct = (cur ?: defaultPct).coerceIn(0, 100)
+        volumePct.value = pct
+        muted.value = false
+        volumeActive.value = true
+    }
+
+    private fun unbindVolume() {
+        volumeThrottleJob?.cancel(); volumeThrottleJob = null
+        pendingVolumePct = -1
+        volumeController = null
+        volumeActive.value = false
+        muted.value = false
+    }
+
+    /** UI 调用：立即更新滑块状态，节流下发到后端。 */
+    fun setVolume(pct: Int) {
+        val v = pct.coerceIn(0, 100)
+        volumePct.value = v
+        if (v > 0 && muted.value) muted.value = false
+        pendingVolumePct = v
+        if (volumeThrottleJob?.isActive == true) return
+        volumeThrottleJob = engineScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val target = pendingVolumePct
+                if (target < 0) break
+                pendingVolumePct = -1
+                volumeController?.setVolume(target)
+                delay(150)                       // 最后值胜出窗口
+                if (pendingVolumePct < 0) break  // 窗口内无新值 → 收尾
+            }
+        }
+    }
+
+    /** UI 调用：切换静音。 */
+    fun toggleMute() {
+        val next = !muted.value
+        muted.value = next
+        engineScope.launch(Dispatchers.IO) { volumeController?.setMute(next) }
+    }
+
     fun stop() {
         casting = false
+        unbindVolume()
         sessionJob?.cancel()   // 协程路径：结构化取消，finally 在 NonCancellable 里清理
         cancelPin()            // 解开正在阻塞的 PIN 等待(poll 120s)，否则停止后会话挂着等 PIN
         runCatching { capture?.stop() }
