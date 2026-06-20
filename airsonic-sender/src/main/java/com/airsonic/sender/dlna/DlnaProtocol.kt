@@ -64,16 +64,17 @@ fun buildDidl(title: String, url: String, mime: String, isVideo: Boolean, sizeBy
 }
 
 const val AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
 
 /** SOAPACTION 头值（含外层引号）。 */
-fun soapAction(action: String): String = "\"$AVTRANSPORT#$action\""
+fun soapAction(action: String, serviceType: String = AVTRANSPORT): String = "\"$serviceType#$action\""
 
 /** 完整 SOAP 信封；paramsXml 为动作参数（不含 InstanceID，函数自动加）。 */
-fun soapBody(action: String, paramsXml: String): String =
+fun soapBody(action: String, paramsXml: String, serviceType: String = AVTRANSPORT): String =
     """<?xml version="1.0" encoding="utf-8"?>""" +
     """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" """ +
     """s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>""" +
-    """<u:$action xmlns:u="$AVTRANSPORT"><InstanceID>0</InstanceID>$paramsXml</u:$action>""" +
+    """<u:$action xmlns:u="$serviceType"><InstanceID>0</InstanceID>$paramsXml</u:$action>""" +
     """</s:Body></s:Envelope>"""
 
 /** SetAVTransportURI 的参数：URI 转义 + DIDL 用 CDATA 包裹。 */
@@ -103,3 +104,7 @@ fun parseSoapError(xml: String): String? {
     val desc = tag(xml, "errorDescription") ?: ""
     return "$code $desc".trim()
 }
+
+/** 从 GetVolume 响应取 CurrentVolume（0..100）；缺/非法返回 null。 */
+fun parseCurrentVolume(xml: String): Int? =
+    Regex("<CurrentVolume>(\\d+)</CurrentVolume>").find(xml)?.groupValues?.get(1)?.toIntOrNull()

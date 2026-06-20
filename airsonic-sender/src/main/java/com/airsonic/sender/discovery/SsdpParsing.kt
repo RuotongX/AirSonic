@@ -14,6 +14,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 data class DlnaRenderer(
     val friendlyName: String,
     val avTransportControlUrl: String,
+    val renderingControlUrl: String? = null,
 )
 
 /** 从 SSDP 包（M-SEARCH 200 响应或 NOTIFY）取 LOCATION；byebye 返回 null。 */
@@ -83,10 +84,31 @@ fun parseRenderer(xml: String, locationUrl: String): DlnaRenderer? {
         if (type?.contains("AVTransport") == true && !ctrl.isNullOrEmpty()) { avtControlUrl = ctrl; break }
     }
 
+    // 同样在 <service> 列表里找 RenderingControl 的 controlURL（音量控制用；可缺）
+    var rcControlUrl: String? = null
+    for (i in 0 until services.length) {
+        val children = services.item(i).childNodes
+        var type: String? = null
+        var ctrl: String? = null
+        for (j in 0 until children.length) {
+            val n = children.item(j)
+            if (n.nodeType != Node.ELEMENT_NODE) continue
+            when (n.nodeName.lowercase()) {
+                "servicetype" -> type = n.textContent?.trim()
+                "controlurl" -> ctrl = n.textContent?.trim()
+            }
+        }
+        if (type?.contains("RenderingControl") == true && !ctrl.isNullOrEmpty()) { rcControlUrl = ctrl; break }
+    }
+
     val rel = avtControlUrl ?: return null
     val base = firstText("URLBase")?.ifEmpty { null } ?: locationUrl
     val name = cleanFriendlyName(firstText("friendlyName")?.ifEmpty { null } ?: "DLNA")
-    return DlnaRenderer(friendlyName = name, avTransportControlUrl = resolveUrl(base, rel))
+    return DlnaRenderer(
+        friendlyName = name,
+        avTransportControlUrl = resolveUrl(base, rel),
+        renderingControlUrl = rcControlUrl?.let { resolveUrl(base, it) },
+    )
 }
 
 private val IPV4 = Regex("""\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}""")

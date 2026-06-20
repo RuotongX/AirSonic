@@ -51,6 +51,7 @@ class SsdpParsingTest {
         val r = parseRenderer(xml, "http://192.168.1.5:8200/rootDesc.xml")!!
         assertEquals("Living Room TV", r.friendlyName)
         assertEquals("http://192.168.1.5:8200/ctl/AVT", r.avTransportControlUrl)
+        assertEquals("http://192.168.1.5:8200/ctl/RC", r.renderingControlUrl)
     }
 
     @Test fun parseRendererNullWhenNoAvTransport() {
@@ -58,6 +59,15 @@ class SsdpParsingTest {
             "<serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>" +
             "<controlURL>/c</controlURL></service></serviceList></device></root>"
         assertNull(parseRenderer(xml, "http://h:1/d.xml"))
+    }
+
+    @Test fun renderingControlUrlNullWhenAbsent() {
+        val xml = "<root><device><friendlyName>X</friendlyName>" +
+            "<serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>" +
+            "<controlURL>/avt</controlURL></service></serviceList></device></root>"
+        val r = parseRenderer(xml, "http://192.168.1.5:8200/d.xml")!!
+        assertEquals("http://192.168.1.5:8200/avt", r.avTransportControlUrl)
+        assertNull(r.renderingControlUrl)
     }
 
     @Test fun rejectsXmlWithDoctypeXxe() {
