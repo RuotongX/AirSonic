@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Movie
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.rounded.Speaker
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.OutlinedTextField
@@ -599,11 +601,12 @@ private fun CastZone() {
 fun MirrorScreen(nav: NavHostController, actions: CastActions) {
     val ctx = LocalContext.current
     var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
+    var infoDialog by remember { mutableStateOf<String?>(null) }
     val phase by CastEngine.phase
     val s = L10n.s
     ScreenScaffold(nav, s.mirrorTitle) {
         // 投画面（整屏）：应用自身不编码画面 → 调起系统无线投屏(Miracast)，由系统驱动投到电视/投影。
-        SectionTitle(s.mirrorPicture)
+        SectionTitleInfo(s.mirrorPicture) { infoDialog = s.systemCastHint }
         Spacer(Modifier.height(8.dp))
         Row(
             Modifier.fillMaxWidth().glass(radius = 16)
@@ -622,17 +625,8 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             ) { Text(s.tagSystem, color = Aurora.TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
             Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
         }
-        // 系统投屏各家入口不一：App 跳到的 AOSP 投屏页在华为等机型可能是空页(不走 Cast+ 发现)，
-        // 华为自带「设置›更多连接›手机投屏」发现更全。给一句准确路牌，免得对空列表发懵。
-        Spacer(Modifier.height(8.dp))
-        Text(
-            s.systemCastHint,
-            color = Aurora.TextDim,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
         Spacer(Modifier.height(20.dp))
-        SectionTitle(s.sound)
+        SectionTitleInfo(s.sound) { infoDialog = s.soundInfo }
         Spacer(Modifier.height(8.dp))
         Row(
             Modifier.fillMaxWidth().glass(radius = 16)
@@ -659,7 +653,33 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             PrimaryButton(s.startMirror, enabled = soundOn) { actions.requestSystemAudioCast() }
         }
         CastZone()
+        infoDialog?.let { InfoDialog(it) { infoDialog = null } }
     }
+}
+
+@Composable
+private fun SectionTitleInfo(title: String, onInfo: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SectionTitle(title)
+        IconButton(onClick = onInfo, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Rounded.Info, contentDescription = title, tint = Aurora.TextDim, modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun InfoDialog(text: String, onClose: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onClose) {
+                Text(L10n.s.confirm, color = Aurora.Cyan)
+            }
+        },
+        text = { Text(text, color = Aurora.TextDim, fontSize = 14.sp, lineHeight = 20.sp) },
+        containerColor = Aurora.Surface,
+    )
 }
 
 // ============ 设置 ============
