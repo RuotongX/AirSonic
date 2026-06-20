@@ -23,7 +23,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -250,8 +257,40 @@ fun CastingBar(deviceName: String, startedAt: Long, spectrum: FloatArray, onStop
             DurationText(startedAt)
             Spacer(Modifier.height(12.dp))
             SpectrumBars(spectrum = spectrum, modifier = Modifier.fillMaxWidth().height(56.dp))
+            if (CastEngine.volumeActive.value) {
+                Spacer(Modifier.height(10.dp))
+                VolumeRow()
+            }
             Spacer(Modifier.height(14.dp))
             GlassButton(L10n.s.stop, onClick = onStop)
         }
+    }
+}
+
+/** 投送中音量控件（滑块 + 静音键）。常驻在投送卡内，频谱下方、停止键上方——最佳实践：音量是投送卡一级控件，不滚动即可见。 */
+@Composable
+private fun VolumeRow() {
+    val s = L10n.s
+    val pct by CastEngine.volumePct
+    val muted by CastEngine.muted
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { CastEngine.toggleMute() }) {
+            Icon(
+                if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
+                contentDescription = s.volumeLabel,
+                tint = Aurora.Cyan,
+            )
+        }
+        Slider(
+            value = pct.toFloat(),
+            onValueChange = { CastEngine.setVolume(it.toInt()) },
+            valueRange = 0f..100f,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("$pct%", color = Aurora.TextDim, fontSize = 12.sp, modifier = Modifier.widthIn(min = 34.dp))
     }
 }

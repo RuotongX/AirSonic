@@ -36,15 +36,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BugReport
-import androidx.compose.material.icons.rounded.VolumeOff
-import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Shield
@@ -64,8 +61,6 @@ import androidx.compose.material.icons.rounded.Speaker
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.OutlinedTextField
@@ -568,32 +563,6 @@ private fun ScreenScaffold(nav: NavHostController, title: String, content: @Comp
     }
 }
 
-@Composable
-private fun VolumeRow() {
-    val s = L10n.s
-    val pct by CastEngine.volumePct
-    val muted by CastEngine.muted
-    Row(
-        Modifier.fillMaxWidth().padding(top = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = { CastEngine.toggleMute() }) {
-            Icon(
-                if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
-                contentDescription = s.volumeLabel,
-                tint = Aurora.Cyan,
-            )
-        }
-        Slider(
-            value = pct.toFloat(),
-            onValueChange = { CastEngine.setVolume(it.toInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text("$pct%", color = Aurora.TextDim, fontSize = 12.sp, modifier = Modifier.widthIn(min = 34.dp))
-    }
-}
 
 @Composable
 private fun CastZone() {
@@ -618,7 +587,6 @@ private fun CastZone() {
                     Spacer(Modifier.height(6.dp))
                     Text("${L10n.s.codecLabel} $codec", color = Aurora.TextDim, fontSize = 11.sp)
                 }
-                if (CastEngine.volumeActive.value) VolumeRow()
             }
         CastPhase.CONNECTING -> Text(status, color = Aurora.Cyan, fontSize = 14.sp)
         CastPhase.ERROR -> Text(status, color = Aurora.Magenta, fontSize = 14.sp)
