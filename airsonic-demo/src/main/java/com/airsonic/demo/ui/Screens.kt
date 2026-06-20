@@ -21,6 +21,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import android.content.Context
+import com.airsonic.demo.BuildConfig
 import com.airsonic.sender.api.AirDevice
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -714,7 +715,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
         Spacer(Modifier.height(16.dp))
         Text(
-            s.version,
+            "${s.version} ${BuildConfig.VERSION_NAME}",
             color = Aurora.TextDim, fontSize = 12.sp,
             modifier = Modifier.fillMaxWidth(),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,

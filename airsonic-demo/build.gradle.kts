@@ -11,8 +11,8 @@ android {
         applicationId = "com.airsonic.demo"
         minSdk = 29
         targetSdk = 33
-        versionCode = 44
-        versionName = "0.2.42"
+        versionCode = 45
+        versionName = "0.2.43"
     }
 
     // CI 用 GitHub Secrets 注入的密钥签名(发布)；本地无密钥时回退到 debug 签名。
@@ -53,6 +53,7 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+        buildConfig = true   // 生成 BuildConfig.VERSION_NAME，供设置页版本号自动跟随
     }
     composeOptions {
         // Kotlin 1.8.22 → Compose 编译器 1.4.8
