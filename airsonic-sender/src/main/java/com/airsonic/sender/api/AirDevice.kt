@@ -37,6 +37,8 @@ data class AirDevice(
     val txtRecords: Map<String, String> = emptyMap(),
     /** DLNA 渲染器的 AVTransport 绝对 controlURL；非 DLNA 设备为 null。 */
     val controlUrl: String? = null,
+    /** DLNA 渲染器的 RenderingControl 绝对 controlURL（音量控制用）；缺则 null。 */
+    val renderingControlUrl: String? = null,
 ) {
     val id: String get() = "$host:$port"
 }

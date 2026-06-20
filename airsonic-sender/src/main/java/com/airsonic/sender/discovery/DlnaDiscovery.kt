@@ -95,6 +95,7 @@ class DlnaDiscovery(context: Context) {
             port = if (u.port > 0) u.port else 80,
             type = DeviceType.DLNA,
             controlUrl = renderer.avTransportControlUrl,
+            renderingControlUrl = renderer.renderingControlUrl,
         )
         listener?.onDeviceFound(device)
     }
