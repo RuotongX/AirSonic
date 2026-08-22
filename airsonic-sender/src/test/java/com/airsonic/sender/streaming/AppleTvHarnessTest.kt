@@ -60,16 +60,19 @@ class AppleTvHarnessTest {
         }
         if (hs == null) { println("FAIL pair-verify (始终失败)"); return }
 
-        // 3) 完整视频流程：AirplayVideoController(SETUP+事件通道+RECORD) → /play
+        // 3) 完整视频流程：AirplayVideoController(SETUP+事件通道+RECORD) → play()
+        //    tvOS 26 走 play-queue /command 新流程（SETUP#2 streams → streamID → 4 条命令），失败自动回退老 /play。
         val ctl = AirplayVideoController(HOST, hs)
         val conn = ctl.connect()
         println(">>> connect(SETUP+event+RECORD) = $conn  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
         if (conn) {
             val url = "http://192.168.100.69:8888/sample.mp4"
             val ok = ctl.play(url, 0.0)
-            println(">>> /play($url) = $ok  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
+            println(">>> play($url) = $ok  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
             // 让 TV 有时间拉流播放
             Thread.sleep(25000)
+            // tvOS 26 play-queue 流程下 /playback-info 恒 500，playbackInfo() 降级返回 null 属正常
+            println(">>> playbackInfo=${ctl.playbackInfo()}（新流程下为 null）")
             println(">>> 观察 TV 是否出画面（8s 内）")
         }
     }

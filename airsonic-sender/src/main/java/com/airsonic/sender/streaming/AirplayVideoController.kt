@@ -6,14 +6,22 @@ package com.airsonic.sender.streaming
 
 import android.util.Log
 import com.airsonic.sender.pairing.PairingHandshake
+import java.security.SecureRandom
 import java.util.UUID
 
 /**
- * AirPlay 视频播放控制（对齐 pyatv 真机抓包）。
+ * AirPlay 视频播放控制（对齐 pyatv 真机抓包 + tvOS 26 play-queue 新流程）。
  *
- * 关键：Apple TV 对**裸 /play 不响应**，必须先走完整会话序列：
- *   pair-verify(已完成) → SETUP(拿 eventPort,NTP计时) → 事件通道 → RECORD → POST /play
- * 其中 SETUP/RECORD 走 RTSP/1.0(带 DACP 头)，/play 走 HTTP/1.1(带 X-Apple-ProtocolVersion/Session-ID/Stream-ID)。
+ * tvOS 26 起废弃老的 `POST /play + /setProperty + /rate` 流程（全 200 但播放器转圈不拉流），
+ * 必须改走 play-queue `/command` 流程（参照 pyatv PR #2846 / airplayv2.py `play_url`，tvOS 26.5 实测可用）：
+ *   SETUP#1(基础会话,NTP计时,+sessionCorrelationUUID) → 事件通道 → RECORD
+ *   → SETUP#2(streams: type=130 遥控流) 拿 streams[0].streamID
+ *   → POST /command ×4：insertPlayQueueItem → setProperty(isInterestedInDateRange)
+ *     → setProperty(actionAtItemEnd) → setRate(1.0)
+ *
+ * 回退策略：play() 先试 play-queue 新流程，任一步失败（SETUP#2 非 2xx / 响应无 streamID /
+ * 任一命令非 2xx）即回退老 /play 流程。不做 /info features bit33(SupportsAirPlayVideoPlayQueue)
+ * 预探测——多一次请求且 bit 语义随版本变动，直接尝试+回退更简单可靠。
  * 见 recon/AppleTV视频_实现蓝图.md 与 recon/pyatv_appletv_play_trace.log。
  */
 class AirplayVideoController(
@@ -23,14 +31,22 @@ class AirplayVideoController(
     private var channel: HapEncryptedChannel? = null
     private var cseq = 0
     private val sessionUuid = UUID.randomUUID().toString().uppercase()
-    /** /play 的 X-Apple-Session-ID。 */
+    /** 老流程 /play 的 X-Apple-Session-ID（新流程改用 sessionUuid，对齐 pyatv）。 */
     private val playSessionId = UUID.randomUUID().toString()
     /** rtsp:// URL 的 session id。 */
     private val rtspSessionId: Long = (Math.random() * 0xFFFFFFFFL).toLong() and 0xFFFFFFFFL
+    /** 随机化的发送端 MAC（locally-administered）。
+     *  Android 拿不到真实 Wi-Fi MAC；pyatv 同样用随机值，设备只要求格式合法。 */
+    private val senderDeviceId = randomSenderDeviceId()
     private var localIp = "0.0.0.0"
     private var timingServer: AirplayTimingServer? = null
     private var eventChannel: AirplayEventChannel? = null
     private val dacpId = "0000000000000001"
+
+    /** play-queue 遥控流的 streamID（SETUP#2 响应）；null=未建立。 */
+    private var playQueueStreamId: Int? = null
+    /** 当前会话是否走 tvOS 26 play-queue 流程（play() 成功后确定）。 */
+    private var usePlayQueue = false
 
     var lastStatus: Int = -1
         private set
@@ -55,10 +71,13 @@ class AirplayVideoController(
         timingServer = tsrv
 
         // 2) SETUP#1（RTSP，无 streams）→ eventPort
+        //    tvOS 26 新流程要求带 sessionCorrelationUUID（pyatv airplayv2 `_setup_base`）；
+        //    老设备忽略该字段，故两条流程共用此 SETUP。
         val setup1: Map<String, Any?> = linkedMapOf(
-            "deviceID" to "AA:BB:CC:DD:EE:FF",
-            "macAddress" to "AA:BB:CC:DD:EE:FF",
+            "deviceID" to senderDeviceId,
+            "macAddress" to senderDeviceId,
             "sessionUUID" to sessionUuid,
+            "sessionCorrelationUUID" to UUID.randomUUID().toString().uppercase(),
             "isMultiSelectAirPlay" to true,
             "timingProtocol" to "NTP",
             "timingPort" to timingPort,
@@ -72,7 +91,7 @@ class AirplayVideoController(
             "statsCollectionEnabled" to false,
             "groupContainsGroupLeader" to false,
         )
-        val r1 = rtsp("SETUP", BPlist.encode(setup1), "application/x-apple-binary-plist") ?: return false
+        val r1 = rtsp("SETUP", BPlist.encode(setup1), BPLIST_CONTENT_TYPE) ?: return false
         if (r1.status !in 200..299) { Log.w(TAG, "SETUP#1 -> ${r1.status}"); return false }
         @Suppress("UNCHECKED_CAST")
         val pl1 = runCatching { BPlist.decode(r1.body) as? Map<Any?, Any?> }.getOrNull()
@@ -90,27 +109,123 @@ class AirplayVideoController(
         return true
     }
 
-    /** POST /play + 启动序列。需先 connect()。
-     *  关键：/play 后视频默认**暂停**，必须发 /rate=1.000000 才开播(否则黑屏转圈)。对齐 pyatv。 */
+    /** 播放：先试 tvOS 26 play-queue 新流程，失败回退老 /play 流程（回退策略见类注释）。需先 connect()。 */
     fun play(url: String, startPosition: Double = 0.0): Boolean {
-        val r = httpReq("POST", "/play", buildPlayBody(url, startPosition), "application/x-apple-binary-plist")
+        if (playViaPlayQueue(url, startPosition)) {
+            usePlayQueue = true
+            return true
+        }
+        Log.w(TAG, "play-queue 流程失败，回退老 /play 流程")
+        usePlayQueue = false
+        return playLegacy(url, startPosition)
+    }
+
+    /** 老流程：POST /play + /setProperty + /rate=1（/play 后默认暂停，必须 rate 才开播）。 */
+    private fun playLegacy(url: String, startPosition: Double): Boolean {
+        val r = httpReq("POST", "/play", buildPlayBody(url, startPosition), BPLIST_CONTENT_TYPE)
         if (r == null || r.status !in 200..299) return false
         httpReq("PUT", "/setProperty?isInterestedInDateRange",
-            BPlist.encode(linkedMapOf<String, Any?>("value" to true)), "application/x-apple-binary-plist")
+            BPlist.encode(linkedMapOf<String, Any?>("value" to true)), BPLIST_CONTENT_TYPE)
         httpReq("PUT", "/setProperty?actionAtItemEnd",
-            BPlist.encode(linkedMapOf<String, Any?>("value" to 0)), "application/x-apple-binary-plist")
+            BPlist.encode(linkedMapOf<String, Any?>("value" to 0)), BPLIST_CONTENT_TYPE)
         rate(1)  // ← 开播(100% 速率)，否则停在暂停/转圈
         return true
     }
 
-    /** 播放速率：1=播放, 0=暂停。pyatv 用浮点格式 value=N.000000。 */
+    /**
+     * tvOS 26 play-queue 新流程（对齐 pyatv airplayv2 `play_url`）：
+     * SETUP#2 申请遥控流拿 streamID，再依序发 4 条 /command。任一步失败返回 false（由 play() 回退）。
+     * 注意：若 SETUP#2 已成功而命令失败，会话上会留一个遥控流，老流程回退仍可用（实测不冲突）。
+     */
+    private fun playViaPlayQueue(url: String, startPosition: Double): Boolean {
+        val sid = setupPlayQueueStream() ?: return false
+        playQueueStreamId = sid
+        Log.i(TAG, "SETUP#2(streams) ✓ streamID=$sid")
+        val itemUuid = UUID.randomUUID().toString().uppercase()
+        val commands = listOf<Map<String, Any?>>(
+            linkedMapOf("type" to "insertPlayQueueItem", "item" to linkedMapOf(
+                "uuid" to itemUuid,
+                "mediaType" to "file",
+                "Content-Location" to url,
+                "Start-Position-Seconds" to startPosition,
+            )),
+            linkedMapOf("type" to "setProperty", "value" to true,
+                "property" to "isInterestedInDateRange",
+                "item" to linkedMapOf("uuid" to itemUuid)),
+            linkedMapOf("type" to "setProperty", "value" to 1, "property" to "actionAtItemEnd"),
+            linkedMapOf("type" to "setRate", "rate" to 1.0),
+        )
+        for (cmd in commands) {
+            val r = sendCommand(cmd) ?: return false
+            if (r.status !in 200..299) { Log.w(TAG, "/command ${cmd["type"]} -> ${r.status}"); return false }
+        }
+        return true
+    }
+
+    /** SETUP#2：申请 type=130 遥控流（play-queue 命令通道），返回 streams[0].streamID；失败返回 null。 */
+    private fun setupPlayQueueStream(): Int? {
+        val body = BPlist.encode(linkedMapOf<String, Any?>("streams" to listOf(
+            linkedMapOf<String, Any?>(
+                "clientUUID" to UUID.randomUUID().toString().uppercase(),
+                "clientTypeUUID" to REMOTE_CONTROL_CLIENT_TYPE,
+                "channelID" to "$senderDeviceId-RCS-1",
+                "controlType" to 1,
+                "type" to 130,
+            ))))
+        val r = rtsp("SETUP", body, BPLIST_CONTENT_TYPE) ?: return null
+        if (r.status !in 200..299) { Log.w(TAG, "SETUP#2(streams) -> ${r.status}"); return null }
+        @Suppress("UNCHECKED_CAST")
+        val pl = runCatching { BPlist.decode(r.body) as? Map<Any?, Any?> }.getOrNull() ?: return null
+        val streams = pl["streams"] as? List<*> ?: return null
+        @Suppress("UNCHECKED_CAST")
+        val s0 = streams.firstOrNull() as? Map<Any?, Any?> ?: return null
+        return (s0["streamID"] as? Number)?.toInt()
+    }
+
+    /**
+     * POST /command（HTTP/1.1）：body 为双层 bplist {"params":{"data":<内层 bplist 命令>}}。
+     * 头含 X-Apple-StreamID（**无连字符**，区别于老流程的 X-Apple-Stream-ID: 1）与 X-Apple-Session-ID；
+     * 对齐 pyatv `RtspSession.exchange`：HTTP 请求同样带 CSeq/DACP-ID/Active-Remote/Client-Instance。
+     */
+    private fun sendCommand(command: Map<String, Any?>): Resp? {
+        val sid = playQueueStreamId ?: return null
+        return send(
+            method = "POST",
+            uri = "/command",
+            proto = "HTTP/1.1",
+            body = buildCommandBody(command),
+            contentType = BPLIST_CONTENT_TYPE,
+            headers = linkedMapOf(
+                "CSeq" to "${cseq++}",
+                "DACP-ID" to dacpId,
+                "Active-Remote" to "1",
+                "Client-Instance" to dacpId,
+                "User-Agent" to COMMAND_USER_AGENT,
+                "X-Apple-ProtocolVersion" to "1",
+                "X-Apple-Session-ID" to sessionUuid,
+                "X-Apple-StreamID" to "$sid",
+            ),
+        )
+    }
+
+    /** 播放速率：1=播放, 0=暂停。新流程走 setRate 命令；老流程 POST /rate?value=N.000000。 */
     fun rate(value: Int): Boolean =
-        (httpReq("POST", "/rate?value=$value.000000", ByteArray(0), null)?.status ?: -1) in 200..299
+        if (usePlayQueue && playQueueStreamId != null) {
+            val r = sendCommand(linkedMapOf("type" to "setRate", "rate" to value.toDouble()))
+            (r?.status ?: -1) in 200..299
+        } else {
+            (httpReq("POST", "/rate?value=$value.000000", ByteArray(0), null)?.status ?: -1) in 200..299
+        }
 
     fun scrub(positionSec: Double): Boolean =
         (httpReq("POST", "/scrub?position=$positionSec", ByteArray(0), null)?.status ?: -1) in 200..299
 
+    /**
+     * 进度/时长查询。tvOS 26（play-queue 流程）下 /playback-info 恒 500，
+     * 播放状态改由事件通道 playbackState 事件推送（当前未解析），故新流程下优雅降级返回 null。
+     */
     fun playbackInfo(): Pair<Double, Double>? {
+        if (usePlayQueue) return null
         val r = httpReq("GET", "/playback-info", ByteArray(0), null) ?: return null
         @Suppress("UNCHECKED_CAST")
         val pl = runCatching { BPlist.decode(r.body) as? Map<Any?, Any?> }.getOrNull() ?: return null
@@ -138,14 +253,14 @@ class AirplayVideoController(
         contentType = contentType,
         headers = linkedMapOf(
             "CSeq" to "${cseq++}",
-            "User-Agent" to "AirPlay/550.10",
+            "User-Agent" to COMMAND_USER_AGENT,
             "DACP-ID" to dacpId,
             "Active-Remote" to "1",
             "Client-Instance" to dacpId,
         ),
     )
 
-    /** HTTP/1.1 请求（/play /rate /scrub /stop /playback-info），带 X-Apple-* 头（无 CSeq，对齐 pyatv）。 */
+    /** 老流程 HTTP/1.1 请求（/play /rate /scrub /stop /playback-info），带 X-Apple-* 头（无 CSeq，对齐 pyatv）。 */
     private fun httpReq(method: String, path: String, body: ByteArray, contentType: String?): Resp? = send(
         method = method,
         uri = path,
@@ -193,6 +308,25 @@ class AirplayVideoController(
 
     companion object {
         private const val TAG = "AirplayVideoController"
+        /** play-queue 流程及 SETUP 的 User-Agent（pyatv COMMAND_USER_AGENT）。 */
+        private const val COMMAND_USER_AGENT = "AirPlay/870.14.1"
+        /** play-queue 遥控流的 clientTypeUUID（pyatv REMOTE_CONTROL_CLIENT_TYPE）。 */
+        private const val REMOTE_CONTROL_CLIENT_TYPE = "A6B27562-B43A-4F2D-B75F-82391E250194"
+        private const val BPLIST_CONTENT_TYPE = "application/x-apple-binary-plist"
+
+        /** /command 体：{"params":{"data":<内层 bplist 命令>}}，双层 bplist 嵌套（对齐 pyatv `_send_url_command`）。 */
+        fun buildCommandBody(command: Map<String, Any?>): ByteArray =
+            BPlist.encode(linkedMapOf<String, Any?>(
+                "params" to linkedMapOf<String, Any?>("data" to BPlist.encode(command))
+            ))
+
+        /** 生成 locally-administered 随机 MAC（首字节 (b & 0xFC) | 0x02），对齐 pyatv airplayv2。 */
+        private fun randomSenderDeviceId(): String {
+            val b = ByteArray(6).also { SecureRandom().nextBytes(it) }
+            b[0] = ((b[0].toInt() and 0xFC) or 0x02).toByte()
+            return b.joinToString(":") { "%02X".format(it) }
+        }
+
         /** /play 体——对照 pyatv 抓包字段集。 */
         fun buildPlayBody(url: String, startPosition: Double): ByteArray =
             BPlist.encode(linkedMapOf<String, Any?>(
