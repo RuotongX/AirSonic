@@ -9,8 +9,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
-import android.provider.Settings
-import android.widget.Toast
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -23,7 +21,6 @@ import androidx.compose.foundation.border
 import android.content.Context
 import com.airsonic.demo.BuildConfig
 import com.airsonic.sender.api.AirDevice
-import com.airsonic.sender.api.DeviceType
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -602,53 +599,30 @@ private fun CastZone() {
 // ============ 屏幕镜像（音频优先） ============
 @Composable
 fun MirrorScreen(nav: NavHostController, actions: CastActions) {
-    val ctx = LocalContext.current
     var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
     var infoDialog by remember { mutableStateOf<String?>(null) }
     val phase by CastEngine.phase
     val s = L10n.s
     ScreenScaffold(nav, s.mirrorTitle) {
-        // 投画面（整屏）：应用自身不编码画面 → 调起系统无线投屏(Miracast)，由系统驱动投到电视/投影。
-        SectionTitleInfo(s.mirrorPicture) { infoDialog = s.systemCastHint }
+        // 投画面（整屏）：自研应用内投屏（录屏 H.264→MPEG-TS→DLNA 实时流），屏幕镜像的唯一能力。
+        SectionTitleInfo(s.mirrorPicture) { infoDialog = s.mirrorInAppSub }
         Spacer(Modifier.height(8.dp))
         Row(
             Modifier.fillMaxWidth().glass(radius = 16)
-                .clickable { launchSystemCast(ctx) }
+                .clickable { actions.requestScreenMirrorCast() }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(s.screenMirrorTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(s.screenMirrorSub, color = Aurora.TextDim, fontSize = 12.sp)
+                Text(s.mirrorInAppTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(s.mirrorInAppSub, color = Aurora.TextDim, fontSize = 12.sp)
             }
             Spacer(Modifier.width(8.dp))
             Box(
-                Modifier.background(Aurora.TextDim.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) { Text(s.tagSystem, color = Aurora.TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
-            Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
-        }
-        // 应用内投屏（DLNA 实时屏幕流）：仅当选中 DLNA 设备（坚果等）时出现
-        val sel by CastEngine.selected
-        if (sel?.type == DeviceType.DLNA) {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth().glass(radius = 16)
-                    .clickable { actions.requestScreenMirrorCast() }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(s.mirrorInAppTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(s.mirrorInAppSub, color = Aurora.TextDim, fontSize = 12.sp)
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                ) { Text(s.dlnaDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
-                Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
-            }
+            ) { Text(s.dlnaDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+            Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(20.dp))
         SectionTitleInfo(s.sound) { infoDialog = s.soundInfo }
@@ -880,21 +854,15 @@ private fun UpdateRow() {
     Spacer(Modifier.height(12.dp))
 }
 
-/** 「支持的协议」详情页：AirPlay / DLNA 为自研投送；Miracast 屏幕镜像为系统投屏(点击直达)。 */
+/** 「支持的协议」详情页：AirPlay / DLNA 均为自研投送（DLNA 含实时屏幕镜像）。 */
 @Composable
 fun ProtocolsScreen(nav: NavHostController) {
-    val ctx = LocalContext.current
     val s = L10n.s
     ScreenScaffold(nav, s.protocolsTitle) {
         Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
             ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagAudio, Aurora.Cyan)
             Spacer(Modifier.height(16.dp))
             ProtocolLine(s.protoDlna, s.protoDlnaSub, s.tagVideoAudio, Aurora.Cyan)
-            Spacer(Modifier.height(16.dp))
-            // Miracast 非自研 → 灰色「系统」标签区分，点击调起系统无线投屏。
-            ProtocolLine(s.screenMirrorTitle, s.screenMirrorSub, s.tagSystem, Aurora.TextDim) {
-                launchSystemCast(ctx)
-            }
         }
     }
 }
@@ -984,14 +952,6 @@ private fun ProtocolLine(name: String, sub: String, tag: String, tagColor: Color
         ) { Text(tag, color = tagColor, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
         if (onClick != null) Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.TextDim, modifier = Modifier.size(20.dp))
     }
-}
-
-/** 方案1：调起系统无线投屏(Miracast)；挑食机型降级到无线设置，再不行弹提示。 */
-private fun launchSystemCast(ctx: android.content.Context) {
-    val opened = listOf("android.settings.CAST_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS).any { action ->
-        runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
-    }
-    if (!opened) Toast.makeText(ctx, L10n.s.castSettingsUnavailable, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
