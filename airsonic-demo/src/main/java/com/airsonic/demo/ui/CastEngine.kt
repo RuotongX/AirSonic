@@ -593,8 +593,7 @@ object CastEngine {
                 val h = ((m.heightPixels * scale).toInt() + 1) / 2 * 2
                 val c = com.airsonic.sender.screen.ScreenMirrorCaster(
                     width = w, height = h, dpi = m.densityDpi, bitRate = 10_000_000,
-                    // 丢包 = 参考帧链断 → 立刻补关键帧自愈（拖尾花屏压到 <100ms 级）
-                    onTsPacket = { pkt -> if (!srv.push(pkt)) caster?.requestSyncFrame() },
+                    emit = { pkt -> srv.push(pkt) },   // 丢包自愈(drop-until-IDR)在 caster 内部
                     onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
                 )
                 caster = c
@@ -625,11 +624,11 @@ object CastEngine {
                 }
                 if (!isActive || !casting || gen != sessionGen) return@launch
                 onCastingStarted(device.name)
-                // 诊断轮询（阻塞 SOAP 切 IO）：状态 + 实际拉流连接数
+                // 诊断轮询（阻塞 SOAP 切 IO）：状态 + 拉流连接数 + 累计丢包（丢>0=下行拥塞）
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
-                    activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}"
+                    activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
                 }
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t

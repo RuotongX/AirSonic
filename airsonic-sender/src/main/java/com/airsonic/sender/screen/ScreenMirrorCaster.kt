@@ -17,8 +17,9 @@ import kotlin.concurrent.thread
  * 屏幕镜像采集编码器：MediaProjection → VirtualDisplay → MediaCodec(H.264 surface 输入)
  * → Annex-B → TsMuxer → 188B TS 包经 [onTsPacket] 扇出（交给 HTTP 流服务器）。
  *
- * 编码参数按 DLNA 实时流调优：Baseline（无 B 帧，PTS=DTS）、1s GOP、码率可调。
- * 新观众中途接入最坏花屏到下一关键帧（≤1s 自愈）。
+ * 编码参数按 DLNA 实时流调优：CBR 恒定码率（压突发防拥塞）、1s GOP、码率可调。
+ * 丢包自愈采用 drop-until-IDR：一旦下行拥塞丢包，停止推送直到下个关键帧干净续流
+ * （把损坏的 P 帧喂给播放器会让其解码器冻屏）。
  */
 class ScreenMirrorCaster(
     private val width: Int = 1280,
@@ -27,14 +28,27 @@ class ScreenMirrorCaster(
     private val bitRate: Int = 10_000_000,
     private val frameRate: Int = 30,
     private val iFrameIntervalSec: Int = 1,
-    private val onTsPacket: (ByteArray) -> Unit,
+    /** 发一个 TS 包到底层扇出；返回 false=发生了丢弃（拥塞信号）。 */
+    private val emit: (ByteArray) -> Boolean,
     private val onLog: (String) -> Unit = { Log.i("ScreenMirror", it) },
 ) {
     private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
     private var projection: MediaProjection? = null
     private val projectionCallback = object : MediaProjection.Callback() {}
-    private val muxer = TsMuxer(onPacket = onTsPacket)
+    // ---- 丢包自愈（drop-until-IDR）----
+    /** 拥塞恢复中：丢弃非关键帧的 TS 包，直到下个 IDR 干净续流。 */
+    @Volatile private var gating = false
+    @Volatile private var inKeyframe = false
+    @Volatile private var droppedInFrame = false
+    private val packetSink: (ByteArray) -> Unit = { pkt ->
+        if (gating && !inKeyframe) {
+            // 恢复中：非关键帧的包直接丢弃（喂损坏 P 帧只会让播放器冻屏）
+        } else if (!emit(pkt)) {
+            droppedInFrame = true; gating = true; requestSyncFrame()
+        }
+    }
+    private val muxer = TsMuxer(onPacket = packetSink)
     @Volatile private var running = false
     private var drainThread: Thread? = null
     /** 编码器是否已产出 SPS/PPS（未产出前 DLNA Play 无意义）。 */
@@ -56,6 +70,10 @@ class ScreenMirrorCaster(
             // Baseline：无 B 帧 → PTS=DTS，PES 打包不用处理重排；兼容性也最好
             runCatching {
                 setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+            }
+            // CBR 恒定码率：压掉码率突发，避免高动态画面瞬间打爆下行队列（冻屏根因之一）
+            runCatching {
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
             }
         }
         val c = try {
@@ -138,7 +156,12 @@ class ScreenMirrorCaster(
             return
         }
         val keyframe = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+        if (keyframe) { inKeyframe = true; droppedInFrame = false }
         muxer.writeVideoFrame(data, info.presentationTimeUs, keyframe)
+        if (keyframe) {
+            inKeyframe = false
+            if (!droppedInFrame) gating = false   // 本关键帧完整发出 → 拥塞恢复完成
+        }
     }
 
     /** 让编码器立刻产一个关键帧（新观众接入/传输丢包时用，把花屏窗口压到最短）。 */

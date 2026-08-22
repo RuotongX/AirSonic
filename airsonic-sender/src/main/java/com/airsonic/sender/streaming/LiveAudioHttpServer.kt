@@ -39,6 +39,8 @@ class LiveAudioHttpServer(
     private val subscribers = ConcurrentHashMap<Socket, LinkedBlockingQueue<ByteArray>>()
     /** 累计被客户端成功 GET 拉流的次数（诊断用：判断 Sonos 是否真的来取流）。 */
     @Volatile var connections = 0; private set
+    /** 累计丢包数（队列溢出丢最旧）。视频直播诊断：丢包≈拥塞/对端读取慢。 */
+    @Volatile var drops = 0L; private set
 
     fun start(): Int {
         val s = ServerSocket(0, 8, InetAddress.getByName("0.0.0.0"))
@@ -59,7 +61,7 @@ class LiveAudioHttpServer(
     fun push(frame: ByteArray): Boolean {
         var clean = true
         for ((_, q) in subscribers) {
-            if (!q.offer(frame)) { q.poll(); q.offer(frame); clean = false }  // 丢最旧
+            if (!q.offer(frame)) { q.poll(); q.offer(frame); clean = false; drops++ }  // 丢最旧
         }
         return clean
     }
