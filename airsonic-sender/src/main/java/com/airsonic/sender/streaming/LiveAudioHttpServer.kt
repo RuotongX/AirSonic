@@ -28,12 +28,15 @@ class LiveAudioHttpServer(
     pathExt: String = "aac",
     private val fakeContentLength: Long? = null,
     private val streamHeader: ByteArray? = null,
+    /** 新观众 GET 订阅流时回调（视频直播用它触发编码器补关键帧，缩短首屏花屏窗口）。 */
+    private val onSubscriber: () -> Unit = {},
+    /** 每客户端队列容量。音频 256 帧≈6s；TS 视频包仅 188B，须给数千级（8192≈1.5MB≈1.2s@10Mbps）。 */
+    private val queueMax: Int = 256,
 ) {
     val path: String = "/live/" + java.util.UUID.randomUUID().toString().replace("-", "") + ".$pathExt"
     private var server: ServerSocket? = null
     @Volatile private var running = false
     private val subscribers = ConcurrentHashMap<Socket, LinkedBlockingQueue<ByteArray>>()
-    private val QUEUE_MAX = 256   // 约 256 帧 ≈ 6s@44.1k/1024spf，超出丢旧
     /** 累计被客户端成功 GET 拉流的次数（诊断用：判断 Sonos 是否真的来取流）。 */
     @Volatile var connections = 0; private set
 
@@ -49,11 +52,16 @@ class LiveAudioHttpServer(
         return s.localPort
     }
 
-    /** 推一帧编码后的数据（AAC=完整 ADTS 帧 / WAV=PCM 块），扇出给所有客户端。 */
-    fun push(frame: ByteArray) {
+    /**
+     * 推一帧编码后的数据（AAC=完整 ADTS 帧 / WAV=PCM 块 / TS=188B 包），扇出给所有客户端。
+     * 队列满丢最旧；返回 false=发生了丢弃（视频直播据此立刻补关键帧，把花屏窗口压到最短）。
+     */
+    fun push(frame: ByteArray): Boolean {
+        var clean = true
         for ((_, q) in subscribers) {
-            if (!q.offer(frame)) { q.poll(); q.offer(frame) }  // 丢最旧
+            if (!q.offer(frame)) { q.poll(); q.offer(frame); clean = false }  // 丢最旧
         }
+        return clean
     }
 
     fun stop() {
@@ -95,14 +103,22 @@ class LiveAudioHttpServer(
             if (method == "HEAD") { Log.i("LiveAudioHttp", "HEAD answered (no body)"); return }
             sock.soTimeout = 0      // 流阶段不再限读（我们只写不读）
             connections++
+            runCatching { onSubscriber() }
             streamHeader?.let { out.write(it); out.flush() }
-            val q = LinkedBlockingQueue<ByteArray>(QUEUE_MAX)
+            val q = LinkedBlockingQueue<ByteArray>(queueMax)
             subscribers[sock] = q
             Log.i("LiveAudioHttp", "streaming started for $reqPath")
             try {
                 while (running && !sock.isClosed) {
                     val frame = q.poll(1, java.util.concurrent.TimeUnit.SECONDS) ?: continue
-                    out.write(frame); out.flush()
+                    // 批量取走积压帧一次写盘（188B TS 包逐包 flush 抖动大、吞吐低）
+                    var batch = frame
+                    var n = 0
+                    while (n < 127) {
+                        val next = q.poll() ?: break
+                        batch += next; n++
+                    }
+                    out.write(batch); out.flush()
                 }
             } finally {
                 subscribers.remove(sock)

@@ -9,6 +9,9 @@ package com.airsonic.sender.dlna
 /** DLNA 内容特征串：OP=01 支持 byte-range/seek；与 LocalMediaHttpServer 的 contentFeatures 头一致。 */
 const val DLNA_CONTENT_FEATURES = "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000"
 
+/** 实时直播流特征串：OP=00 声明不可 seek——诱导渲染器少建缓冲，降低直播延迟。 */
+const val DLNA_CONTENT_FEATURES_LIVE = "DLNA.ORG_OP=00;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+
 /** XML 文本转义（5 个实体）。 */
 fun escapeXml(s: String): String = buildString(s.length + 16) {
     for (c in s) when (c) {
@@ -49,9 +52,10 @@ fun hmsToSec(hms: String): Double {
  * 最小 DIDL-Lite 元数据（title/url 已转义）。
  * [sizeBytes] > 0 时写入 `<res size>`，严格渲染器用它做缓冲/seek 决策（DLNA 推荐）。
  */
-fun buildDidl(title: String, url: String, mime: String, isVideo: Boolean, sizeBytes: Long? = null): String {
+fun buildDidl(title: String, url: String, mime: String, isVideo: Boolean, sizeBytes: Long? = null,
+              contentFeatures: String = DLNA_CONTENT_FEATURES): String {
     val cls = if (isVideo) "object.item.videoItem" else "object.item.audioItem.musicTrack"
-    val proto = "http-get:*:$mime:$DLNA_CONTENT_FEATURES"
+    val proto = "http-get:*:$mime:$contentFeatures"
     val sizeAttr = if (sizeBytes != null && sizeBytes > 0) """ size="$sizeBytes"""" else ""
     return """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" """ +
         """xmlns:dc="http://purl.org/dc/elements/1.1/" """ +

@@ -24,7 +24,7 @@ class ScreenMirrorCaster(
     private val width: Int = 1280,
     private val height: Int = 720,
     private val dpi: Int = 320,
-    private val bitRate: Int = 6_000_000,
+    private val bitRate: Int = 10_000_000,
     private val frameRate: Int = 30,
     private val iFrameIntervalSec: Int = 1,
     private val onTsPacket: (ByteArray) -> Unit,
@@ -141,8 +141,12 @@ class ScreenMirrorCaster(
         muxer.writeVideoFrame(data, info.presentationTimeUs, keyframe)
     }
 
-    /** 让编码器立刻产一个关键帧（新观众接入时用，减轻中途花屏窗口）。 */
+    /** 让编码器立刻产一个关键帧（新观众接入/传输丢包时用，把花屏窗口压到最短）。 */
+    @Volatile private var lastSyncRequestAt = 0L
     fun requestSyncFrame() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastSyncRequestAt < 500) return   // 节流：拥塞持续时最多 2 次/秒
+        lastSyncRequestAt = now
         runCatching {
             codec?.setParameters(android.os.Bundle().apply {
                 putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)

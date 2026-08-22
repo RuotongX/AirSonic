@@ -580,18 +580,21 @@ object CastEngine {
                     pm.getMediaProjection(resultCode, data)
                 }
                 // 无限长 TS 直播流（LiveAudioHttpServer 实为内容无关扇出：换 contentType 即可）
+                // 新观众接入即补关键帧；队列按视频量级给 8192 包（≈1.5MB，音频默认 256 远不够）
                 val srv = com.airsonic.sender.streaming.LiveAudioHttpServer(
-                    contentType = "video/mp2t", pathExt = "ts")
+                    contentType = "video/mp2t", pathExt = "ts", queueMax = 8192,
+                    onSubscriber = { caster?.requestSyncFrame() })
                 server = srv
                 val port = withContext(Dispatchers.IO) { srv.start() }
-                // 最长边压到 1280，保宽高比、偶数对齐（H.264 yuv420 要求偶数）
+                // 最长边压到 1920（1080p 级），保宽高比、偶数对齐（H.264 yuv420 要求偶数）
                 val m = app.resources.displayMetrics
-                val scale = minOf(1f, 1280f / maxOf(m.widthPixels, m.heightPixels))
+                val scale = minOf(1f, 1920f / maxOf(m.widthPixels, m.heightPixels))
                 val w = ((m.widthPixels * scale).toInt() + 1) / 2 * 2
                 val h = ((m.heightPixels * scale).toInt() + 1) / 2 * 2
                 val c = com.airsonic.sender.screen.ScreenMirrorCaster(
-                    width = w, height = h, dpi = m.densityDpi,
-                    onTsPacket = { pkt -> srv.push(pkt) },
+                    width = w, height = h, dpi = m.densityDpi, bitRate = 10_000_000,
+                    // 丢包 = 参考帧链断 → 立刻补关键帧自愈（拖尾花屏压到 <100ms 级）
+                    onTsPacket = { pkt -> if (!srv.push(pkt)) caster?.requestSyncFrame() },
                     onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
                 )
                 caster = c
@@ -606,7 +609,8 @@ object CastEngine {
                 val localIp = localIpForTarget(device.host)
                     ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${srv.path}"
-                val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true)
+                val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true,
+                    contentFeatures = com.airsonic.sender.dlna.DLNA_CONTENT_FEATURES_LIVE)   // OP=00 直播：少建缓冲降延迟
                 val dc = DlnaController(device.controlUrl!!); ctl = dc; dlnaCtl = dc   // 入口已判非空
                 device.renderingControlUrl?.let {
                     bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)

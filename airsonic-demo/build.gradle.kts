@@ -11,8 +11,8 @@ android {
         applicationId = "com.airsonic.demo"
         minSdk = 29
         targetSdk = 33
-        versionCode = 47
-        versionName = "0.3.1"
+        versionCode = 48
+        versionName = "0.3.2"
     }
 
     // CI 用 GitHub Secrets 注入的密钥签名(发布)；本地无密钥时回退到 debug 签名。
