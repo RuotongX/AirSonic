@@ -32,14 +32,21 @@ class ScreenMirrorCaster(
 ) {
     private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
+    private var projection: MediaProjection? = null
+    private val projectionCallback = object : MediaProjection.Callback() {}
     private val muxer = TsMuxer(onPacket = onTsPacket)
     @Volatile private var running = false
     private var drainThread: Thread? = null
     /** 编码器是否已产出 SPS/PPS（未产出前 DLNA Play 无意义）。 */
     @Volatile var ready = false; private set
+    /** start 失败原因（vivo 等 ROM 屏蔽 logcat，诊断须透传到 UI 状态行）。 */
+    @Volatile var lastError: String? = null; private set
 
-    /** 开始采集编码。[projection] 须已授权且前台 Service 已起。返回 false=编码器初始化失败。 */
+    /** 开始采集编码。[projection] 须已授权且前台 Service 已起。返回 false=编码器初始化失败（原因见 [lastError]）。 */
     fun start(projection: MediaProjection): Boolean {
+        this.projection = projection
+        // Android 14+ 强制：createVirtualDisplay 前必须 registerCallback，否则 SecurityException
+        runCatching { projection.registerCallback(projectionCallback, null) }
         val fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -53,9 +60,17 @@ class ScreenMirrorCaster(
         }
         val c = try {
             MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
-                configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                try {
+                    configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                } catch (t: Throwable) {
+                    // 兜底：个别 ROM 编码器拒 Baseline profile，去掉 profile 重配一次
+                    onLog("带 Baseline 配置被拒(${t.message})，去 profile 重试")
+                    fmt.removeKey(MediaFormat.KEY_PROFILE)
+                    configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }
             }
         } catch (t: Throwable) {
+            lastError = "编码器初始化: ${t.javaClass.simpleName} ${t.message}"
             onLog("编码器初始化失败: ${t.message}")
             return false
         }
@@ -64,15 +79,23 @@ class ScreenMirrorCaster(
             c.start()
             s
         } catch (t: Throwable) {
+            lastError = "编码器start: ${t.javaClass.simpleName} ${t.message}"
             onLog("编码器 start 失败: ${t.message}")
             runCatching { c.release() }
             return false
         }
         codec = c
-        display = projection.createVirtualDisplay(
-            "airsonic-mirror", width, height, dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null
-        )
+        try {
+            display = projection.createVirtualDisplay(
+                "airsonic-mirror", width, height, dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null
+            )
+        } catch (t: Throwable) {
+            lastError = "虚拟屏: ${t.javaClass.simpleName} ${t.message}"
+            onLog("createVirtualDisplay 失败: ${t.message}")
+            runCatching { c.stop() }; runCatching { c.release() }; codec = null
+            return false
+        }
         running = true
         drainThread = thread(isDaemon = true, name = "airsonic-screen-drain") { drainLoop(c) }
         onLog("录屏编码已启动 ${width}x${height}@${frameRate} bitrate=$bitRate")
@@ -133,6 +156,8 @@ class ScreenMirrorCaster(
         runCatching { display?.release() }; display = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }; codec = null
+        projection?.let { runCatching { it.unregisterCallback(projectionCallback) } }
+        projection = null
         onLog("录屏编码已停止")
     }
 

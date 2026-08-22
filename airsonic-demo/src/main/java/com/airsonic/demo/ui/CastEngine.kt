@@ -596,10 +596,13 @@ object CastEngine {
                 )
                 caster = c
                 val proj = projection ?: run { fail(L10n.s.setupFail, gen); return@launch }
-                if (!withContext(Dispatchers.IO) { c.start(proj) }) { fail(L10n.s.setupFail, gen); return@launch }
+                // vivo 等 ROM 屏蔽 logcat → 失败原因必须透传到 UI 状态行
+                if (!withContext(Dispatchers.IO) { c.start(proj) }) {
+                    fail("${L10n.s.setupFail}: ${c.lastError ?: "?"}", gen); return@launch
+                }
                 // 等编码器产出 SPS/PPS（首帧配置），最多 2s
                 var wr = 0; while (!c.ready && wr < 2000) { delay(50); wr += 50 }
-                if (!c.ready) { fail(L10n.s.setupFail, gen); return@launch }
+                if (!c.ready) { fail("${L10n.s.setupFail}: 编码器无输出", gen); return@launch }
                 val localIp = localIpForTarget(device.host)
                     ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${srv.path}"
