@@ -9,7 +9,9 @@ import android.content.Intent
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -135,6 +137,33 @@ object CastEngine {
     // ---- T2 协程化（四条投送路径全部迁 engineScope；仅 Sonos pump/诊断为保留线程，靠 casting/gen 退出）----
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var sessionJob: Job? = null
+
+    // ---- 后台保活 ----
+    // 投送期间持 Wi-Fi 高吞吐锁 + 部分唤醒锁。否则 app 一切后台，Wi-Fi 进省电(DTIM 间隙)、
+    // CPU 降频，实时流断供——电视端播放器缓冲耗尽就报「服务断开」(坚果/当贝实测)。
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    @Synchronized
+    private fun castLocksAcquire(app: Context) {
+        if (wifiLock == null) {
+            val wm = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "airsonic:cast")
+                .apply { setReferenceCounted(false); acquire() }
+        }
+        if (wakeLock == null) {
+            val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "airsonic:cast")
+                .apply { setReferenceCounted(false); acquire() }
+        }
+    }
+
+    @Synchronized
+    private fun castLocksRelease() {
+        runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
+        runCatching { wakeLock?.let { if (it.isHeld) it.release() } }
+        wifiLock = null; wakeLock = null
+    }
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
     val videoDur = mutableStateOf(0.0)
@@ -235,6 +264,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
+        castLocksAcquire(app)
         val gen = ++sessionGen
         sessionJob?.cancel()   // 停掉可能在跑的协程会话(DLNA)，与线程路径互斥
         CaptureProjectionService.start(app)
@@ -324,6 +354,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
+        castLocksAcquire(app)
         val gen = ++sessionGen
         sessionJob?.cancel()
         // 【T2 阶段2 已迁协程】connect(含 PIN 配对,可阻塞 120s)与 streamAudio 全 withContext(IO)；
@@ -367,6 +398,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = true
+        castLocksAcquire(app)
         val gen = ++sessionGen
         sessionJob?.cancel()
         // 【T2 阶段4 已迁协程】connect/play/进度轮询全 withContext(IO)/delay；停止=cancel。
@@ -415,6 +447,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true; isVideo.value = isVideoFile
+        castLocksAcquire(app)
         val gen = ++sessionGen
         sessionJob?.cancel()
         sessionJob = engineScope.launch {
@@ -564,6 +597,7 @@ object CastEngine {
         phase.value = CastPhase.CONNECTING
         statusLine.value = "${L10n.s.connecting} ${device.name} …"
         casting = true
+        castLocksAcquire(app)
         val gen = ++sessionGen
         sessionJob?.cancel()
         CaptureProjectionService.start(app)
@@ -644,6 +678,7 @@ object CastEngine {
                     if (dlnaCtl === ctl) dlnaCtl = null
                     if (gen == sessionGen) {
                         casting = false
+                        castLocksRelease()
                         unbindVolume()
                         runCatching { CaptureProjectionService.stop(app) }
                         startedAt.value = 0L; level.value = 0f
@@ -665,6 +700,7 @@ object CastEngine {
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return        // 已被新会话接管：别动全局引用/UI 状态
         casting = false
+        castLocksRelease()
         unbindVolume()
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
@@ -731,6 +767,7 @@ object CastEngine {
 
     fun stop() {
         casting = false
+        castLocksRelease()
         unbindVolume()
         sessionJob?.cancel()   // 协程路径：结构化取消，finally 在 NonCancellable 里清理
         cancelPin()            // 解开正在阻塞的 PIN 等待(poll 120s)，否则停止后会话挂着等 PIN
@@ -770,6 +807,7 @@ object CastEngine {
         runCatching { projection?.stop() }           // MediaProjection 也要停，否则系统投屏指示常驻、干扰下次授权
         if (gen != sessionGen) return                // 已被新会话接管：别动全局状态/前台服务
         casting = false
+        castLocksRelease()
         unbindVolume()
         capture = null
         restorePhone(app)
@@ -807,6 +845,7 @@ object CastEngine {
         runCatching { ownServer?.stop() }
         if (gen != sessionGen) return     // 已被新会话接管：别动全局引用/UI 状态
         casting = false
+        castLocksRelease()
         unbindVolume()
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null

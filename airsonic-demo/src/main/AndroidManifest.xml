@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- 投送期间持 Wi-Fi 高吞吐锁 + 部分唤醒锁，防切后台后 Wi-Fi 省电/CPU 降频断流 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 读取本机音/视频，用于 app 内媒体浏览器 -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />

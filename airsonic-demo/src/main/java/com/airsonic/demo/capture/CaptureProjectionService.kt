@@ -64,8 +64,8 @@ class CaptureProjectionService : Service() {
             nm.createNotificationChannel(channel)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AirSonic 系统音频捕获中")
-            .setContentText("正在采集系统音频用于兼容性测试")
+            .setContentTitle("AirSonic 投送中")
+            .setContentText("正在向接收设备实时投送，勿清后台")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
