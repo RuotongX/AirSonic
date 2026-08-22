@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
+import android.provider.Settings as SysSettings
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -603,6 +604,7 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
     var infoDialog by remember { mutableStateOf<String?>(null) }
     val phase by CastEngine.phase
     val s = L10n.s
+    val ctx = LocalContext.current
     ScreenScaffold(nav, s.mirrorTitle) {
         // 投画面（整屏）：自研应用内投屏（录屏 H.264→MPEG-TS→DLNA 实时流），屏幕镜像的唯一能力。
         SectionTitleInfo(s.mirrorPicture) { infoDialog = s.mirrorInAppSub }
@@ -652,6 +654,16 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             PrimaryButton(s.startMirror, enabled = soundOn) { actions.requestSystemAudioCast() }
         }
         CastZone()
+        Spacer(Modifier.height(12.dp))
+        // 后台保活引导：切后台断流多半是 ROM 省电限制（vivo 需另开 自启动+后台高耗电）
+        Text(
+            s.bgKeepHint, color = Aurora.TextDim, fontSize = 12.sp,
+            modifier = Modifier
+                .clickable {
+                    runCatching { ctx.startActivity(Intent(SysSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                }
+                .padding(vertical = 6.dp),
+        )
         infoDialog?.let { InfoDialog(it) { infoDialog = null } }
     }
 }

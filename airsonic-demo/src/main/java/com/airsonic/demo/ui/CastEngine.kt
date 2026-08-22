@@ -97,6 +97,13 @@ object CastEngine {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         forceAlac.value = p.getBoolean("force_alac", false)
         sonosWav.value = p.getBoolean("sonos_wav", true)
+        // 强杀/崩溃后冷启动：上次 DLNA 会话的 Stop 没发出去（电视可能还在播）→ 补发 Stop 清场
+        val stale = p.getString("last_dlna_ctl", null)
+        if (stale != null) {
+            p.edit().remove("last_dlna_ctl").apply()
+            thread(isDaemon = true, name = "airsonic-stale-stop") { runCatching { DlnaController(stale).stop() } }
+            statusLine.value = L10n.s.cleanedLastSession
+        }
     }
 
     fun setForceAlac(context: Context, v: Boolean) {
@@ -127,6 +134,8 @@ object CastEngine {
     @Volatile private var volumeController: VolumeController? = null
     /** 投送中音量百分比 0..100，UI 滑块绑定。 */
     val volumePct = mutableStateOf(50)
+    /** 音量下发被设备拒绝/无响应（海信 VIDAA 等）→ UI 在滑块下提示用遥控器。 */
+    val volumeWarn = mutableStateOf(false)
     /** 是否静音。 */
     val muted = mutableStateOf(false)
     /** 是否已绑定音量后端（驱动 UI 控件显隐）。 */
@@ -143,9 +152,11 @@ object CastEngine {
     // CPU 降频，实时流断供——电视端播放器缓冲耗尽就报「服务断开」(坚果/当贝实测)。
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var castLockApp: Context? = null   // 释锁时清「DLNA 会话落盘」要用
 
     @Synchronized
     private fun castLocksAcquire(app: Context) {
+        castLockApp = app
         if (wifiLock == null) {
             val wm = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "airsonic:cast")
@@ -163,6 +174,18 @@ object CastEngine {
         runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
         runCatching { wakeLock?.let { if (it.isHeld) it.release() } }
         wifiLock = null; wakeLock = null
+        clearDlnaSession()   // 每条干净收尾都过这里 → 会话落盘随正常结束清除
+    }
+
+    /** DLNA 会话控制端点落盘：进程被强杀时 Stop 发不出去，电视可能还在播；下次冷启动补发（见 loadPrefs）。 */
+    private fun persistDlnaSession(app: Context, controlUrl: String) {
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("last_dlna_ctl", controlUrl).apply()
+    }
+
+    private fun clearDlnaSession() {
+        castLockApp?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()
+            ?.remove("last_dlna_ctl")?.apply()
     }
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
@@ -453,6 +476,7 @@ object CastEngine {
         sessionJob = engineScope.launch {
             var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
             var ctl: DlnaController? = null
+            var endMsg: String? = null   // 电视端断开/播完时的收尾文案（优先级高于「已停止」）
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = isVideoFile)
                 if (src.length <= 0) { fail(L10n.s.openFail, gen); return@launch }
@@ -462,20 +486,37 @@ object CastEngine {
                 val url = "http://$localIp:$port${server.path}"
                 val didl = buildDidl(device.name, url, src.mimeType, isVideoFile, sizeBytes = src.length)
                 val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
+                persistDlnaSession(app, controlUrl)
                 if (!withContext(Dispatchers.IO) { c.setUri(url, didl) }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
                 if (!withContext(Dispatchers.IO) { c.play() }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
                 onCastingStarted(device.name)
+                var soapFail = 0; var pollN = 0
                 while (isActive && casting && gen == sessionGen) {
                     delay(1000)
-                    val info = withContext(Dispatchers.IO) { c.getPositionInfo() } ?: continue
+                    val info = withContext(Dispatchers.IO) { c.getPositionInfo() }
+                    if (info == null) {
+                        // 连续 5s SOAP 无响应 ≈ 电视端已断（关机/退出播放器/断网）→ 收尾
+                        if (++soapFail >= 5) { endMsg = L10n.s.tvDisconnected; break }
+                        continue
+                    }
+                    soapFail = 0
                     videoPos.value = info.first; videoDur.value = info.second
+                    // 每 5s 查一次传输状态：电视上按了停止/播放完 → 退出投送态，别留僵尸读秒
+                    if (++pollN % 5 == 0) {
+                        val st = withContext(Dispatchers.IO) { c.getTransportInfo() }
+                        if (st == "STOPPED" || st == "NO_MEDIA_PRESENT") {
+                            val done = info.second > 0 && info.first >= info.second - 2
+                            endMsg = if (done) L10n.s.playFinished else L10n.s.tvDisconnected
+                            break
+                        }
+                    }
                 }
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t   // 取消正常传播，别当错误
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                withContext(NonCancellable) { dlnaCleanup(gen, server, ctl) }
+                withContext(NonCancellable) { dlnaCleanup(gen, server, ctl, endMsg) }
             }
         }
     }
@@ -526,6 +567,7 @@ object CastEngine {
                 else -> com.airsonic.sender.dlna.buildLiveAudioDidl(device.name, httpUrl)
             }
             val c = DlnaController(controlUrl); ctl = c; dlnaCtl = c
+            persistDlnaSession(app, controlUrl)
             if (!casting || gen != sessionGen) return
             val rcUrl = device.renderingControlUrl
             if (rcUrl != null) {
@@ -606,6 +648,7 @@ object CastEngine {
             var projection: android.media.projection.MediaProjection? = null
             var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
             var ctl: DlnaController? = null
+            var endMsg: String? = null   // 电视端断开时的收尾文案（优先级高于「已停止」）
             try {
                 var waited = 0
                 while (!CaptureProjectionService.isForeground && waited < 2000) { delay(50); waited += 50 }
@@ -645,6 +688,7 @@ object CastEngine {
                 val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true,
                     contentFeatures = com.airsonic.sender.dlna.DLNA_CONTENT_FEATURES_LIVE)   // OP=00 直播：少建缓冲降延迟
                 val dc = DlnaController(device.controlUrl!!); ctl = dc; dlnaCtl = dc   // 入口已判非空
+                persistDlnaSession(app, device.controlUrl!!)
                 device.renderingControlUrl?.let {
                     bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
                 }
@@ -659,10 +703,18 @@ object CastEngine {
                 if (!isActive || !casting || gen != sessionGen) return@launch
                 onCastingStarted(device.name)
                 // 诊断轮询（阻塞 SOAP 切 IO）：状态 + 拉流连接数 + 累计丢包（丢>0=下行拥塞）
+                var hadSub = false; var zeroPolls = 0
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
                     activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
+                    if (srv.connections > 0) { hadSub = true; zeroPolls = 0 }
+                    // 电视端停了（用户在电视上退出/播放器崩）或放弃拉流（持续 9s 无订阅者）
+                    // → 会话名存实亡：收尾退出投送态，别留僵尸读秒
+                    if (st == "STOPPED" || st == "NO_MEDIA_PRESENT"
+                        || (hadSub && srv.connections == 0 && ++zeroPolls >= 3)) {
+                        endMsg = L10n.s.tvDisconnected; break
+                    }
                 }
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t
@@ -683,7 +735,7 @@ object CastEngine {
                         runCatching { CaptureProjectionService.stop(app) }
                         startedAt.value = 0L; level.value = 0f
                         spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
-                        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+                        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = endMsg ?: L10n.s.stopped }
                     }
                 }
             }
@@ -694,6 +746,7 @@ object CastEngine {
         gen: Int,
         ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,
         ownCtl: DlnaController? = null,
+        endMsg: String? = null,
     ) {
         // 自己的资源无条件关；网络 Stop 切后台(阻塞 SOAP 会拖慢 UI 复位好几秒)
         ownCtl?.let { c -> thread(isDaemon = true, name = "airsonic-dlna-stop") { runCatching { c.stop() } } }
@@ -706,7 +759,7 @@ object CastEngine {
         if (httpServer === ownServer) httpServer = null
         isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
         startedAt.value = 0L; level.value = 0f; spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
-        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = endMsg ?: L10n.s.stopped }
     }
 
     fun submitPin(pin: String) { pinQueue.offer(pin) }
@@ -724,6 +777,7 @@ object CastEngine {
     /** 绑定音量后端并按 getVolume 初始化滑块（读不到走默认）。在投送会话建立后调用。 */
     private fun bindVolume(controller: VolumeController, defaultPct: Int) {
         volumeController = controller
+        volumeWarn.value = false
         val cur = controller.getVolume()
         val pct = (cur ?: defaultPct).coerceIn(0, 100)
         volumePct.value = pct
@@ -751,7 +805,8 @@ object CastEngine {
                 val target = pendingVolumePct
                 if (target < 0) break
                 pendingVolumePct = -1
-                volumeController?.setVolume(target)
+                // 下发结果反哺 UI：设备拒收(海信 VIDAA 等) → 滑块下提示改用遥控器
+                volumeWarn.value = volumeController?.setVolume(target) == false
                 delay(150)                       // 最后值胜出窗口
                 if (pendingVolumePct < 0) break  // 窗口内无新值 → 收尾
             }

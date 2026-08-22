@@ -114,6 +114,10 @@ data class Strings(
     val mirrorInAppTitle: String,   // 应用内投屏（DLNA 实时屏幕流）
     val mirrorInAppSub: String,     // 录屏实时投到选中设备…延迟说明
     val mirrorNeedsDlna: String,    // 应用内投屏需选中 DLNA 设备
+    val tvDisconnected: String,     // 电视端已断开/停止，投送结束
+    val volumeUnsupported: String,  // 音量下发失败提示（设备不支持）
+    val bgKeepHint: String,         // 后台保活引导（点按跳系统设置）
+    val cleanedLastSession: String, // 冷启动清理上次投送残留
 )
 
 private val ZH = Strings(
@@ -178,6 +182,10 @@ private val ZH = Strings(
     mirrorInAppTitle = "应用内投屏",
     mirrorInAppSub = "录屏实时投到选中的 DLNA 设备（坚果等），延迟约 1~3 秒",
     mirrorNeedsDlna = "应用内投屏需先在首页选中 DLNA 设备（如坚果投影）",
+    tvDisconnected = "电视端已断开，投送结束",
+    volumeUnsupported = "音量控制未送达：该设备可能不支持，请用电视遥控器",
+    bgKeepHint = "切后台断流？点我跳系统设置允许后台运行（vivo 另需开：自启动 + 后台高耗电）",
+    cleanedLastSession = "检测到上次投送未正常结束，已通知电视停止",
 )
 
 private val EN = Strings(
@@ -242,6 +250,10 @@ private val EN = Strings(
     mirrorInAppTitle = "In-app screen cast",
     mirrorInAppSub = "Mirror your screen live to the selected DLNA device (JMGO etc.), ~1–3s delay",
     mirrorNeedsDlna = "In-app casting needs a DLNA device selected on Home (e.g. JMGO projector)",
+    tvDisconnected = "TV disconnected — cast ended",
+    volumeUnsupported = "Volume command not accepted by this device — use the TV remote",
+    bgKeepHint = "Drops when backgrounded? Tap to allow background run (vivo: also enable auto-start + background high power)",
+    cleanedLastSession = "Previous cast did not end cleanly — stop sent to the TV",
 )
 
 object L10n {

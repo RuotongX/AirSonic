@@ -273,24 +273,32 @@ private fun VolumeRow() {
     val s = L10n.s
     val pct by CastEngine.volumePct
     val muted by CastEngine.muted
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = { CastEngine.toggleMute() }) {
-            Icon(
-                if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
-                contentDescription = s.volumeLabel,
-                tint = Aurora.Cyan,
+    val warn by CastEngine.volumeWarn
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = { CastEngine.toggleMute() }) {
+                Icon(
+                    if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
+                    contentDescription = s.volumeLabel,
+                    tint = Aurora.Cyan,
+                )
+            }
+            Slider(
+                value = pct.toFloat(),
+                onValueChange = { CastEngine.setVolume(it.toInt()) },
+                valueRange = 0f..100f,
+                modifier = Modifier.weight(1f),
             )
+            Spacer(Modifier.width(8.dp))
+            Text("$pct%", color = Aurora.TextDim, fontSize = 12.sp, modifier = Modifier.widthIn(min = 34.dp))
         }
-        Slider(
-            value = pct.toFloat(),
-            onValueChange = { CastEngine.setVolume(it.toInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.weight(1f),
+        // 设备拒收音量 SOAP（海信 VIDAA 等）→ 提示改用遥控器
+        if (warn) Text(
+            s.volumeUnsupported, color = Aurora.Magenta, fontSize = 11.sp,
+            modifier = Modifier.padding(start = 48.dp, top = 2.dp),
         )
-        Spacer(Modifier.width(8.dp))
-        Text("$pct%", color = Aurora.TextDim, fontSize = 12.sp, modifier = Modifier.widthIn(min = 34.dp))
     }
 }
