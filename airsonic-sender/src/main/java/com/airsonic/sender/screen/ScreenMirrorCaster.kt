@@ -28,6 +28,8 @@ class ScreenMirrorCaster(
     private val bitRate: Int = 10_000_000,
     private val frameRate: Int = 30,
     private val iFrameIntervalSec: Int = 1,
+    /** true=TS 里加 AAC 音轨（声画同投）；音帧由 [writeAudioFrame] 喂入。 */
+    private val withAudio: Boolean = false,
     /** 发一个 TS 包到底层扇出；返回 false=发生了丢弃（拥塞信号）。 */
     private val emit: (ByteArray) -> Boolean,
     private val onLog: (String) -> Unit = { Log.i("ScreenMirror", it) },
@@ -39,6 +41,8 @@ class ScreenMirrorCaster(
     // ---- 丢包自愈（drop-until-IDR）----
     /** 拥塞恢复中：丢弃非关键帧的 TS 包，直到下个 IDR 干净续流。 */
     @Volatile private var gating = false
+    /** 首帧视频 pts（归零基准）；音轨 pts 从 0 起，与此同基。 */
+    @Volatile private var ptsBase = -1L
     @Volatile private var inKeyframe = false
     @Volatile private var droppedInFrame = false
     private val packetSink: (ByteArray) -> Unit = { pkt ->
@@ -48,7 +52,7 @@ class ScreenMirrorCaster(
             droppedInFrame = true; gating = true; requestSyncFrame()
         }
     }
-    private val muxer = TsMuxer(onPacket = packetSink)
+    private val muxer = TsMuxer(audioPid = if (withAudio) 0x102 else null, onPacket = packetSink)
     @Volatile private var running = false
     private var drainThread: Thread? = null
     /** 编码器是否已产出 SPS/PPS（未产出前 DLNA Play 无意义）。 */
@@ -157,11 +161,18 @@ class ScreenMirrorCaster(
         }
         val keyframe = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         if (keyframe) { inKeyframe = true; droppedInFrame = false }
-        muxer.writeVideoFrame(data, info.presentationTimeUs, keyframe)
+        // pts 归零对齐：视频编码器给的是 nanoTime 系大数，音轨 pts 从 0 起——同基才能声画同步
+        if (ptsBase < 0) ptsBase = info.presentationTimeUs
+        muxer.writeVideoFrame(data, info.presentationTimeUs - ptsBase, keyframe)
         if (keyframe) {
             inKeyframe = false
             if (!droppedInFrame) gating = false   // 本关键帧完整发出 → 拥塞恢复完成
         }
+    }
+
+    /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起）。无音轨模式直接丢弃。 */
+    fun writeAudioFrame(adtsFrame: ByteArray, ptsUs: Long) {
+        if (withAudio) muxer.writeAudioFrame(adtsFrame, ptsUs)
     }
 
     /** 让编码器立刻产一个关键帧（新观众接入/传输丢包时用，把花屏窗口压到最短）。 */

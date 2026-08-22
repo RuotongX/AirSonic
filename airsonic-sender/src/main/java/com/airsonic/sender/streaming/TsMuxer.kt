@@ -33,11 +33,13 @@ class TsMuxer(
     private var packetsSincePatPmt = Int.MAX_VALUE // 强制首帧前先发 PAT/PMT
 
     /** 灌入编码器输出的 SPS/PPS（Annex-B，含 00 00 00 01 起始码）。关键帧前自动重发。 */
+    @Synchronized
     fun setSpsPps(sps: ByteArray, pps: ByteArray) {
         this.sps = sps; this.pps = pps
     }
 
     /** 喂一个 H.264 access unit（Annex-B，不含 SPS/PPS；关键帧自动前置 SPS/PPS）。ptsUs 为微秒呈现时间。 */
+    @Synchronized
     fun writeVideoFrame(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
         val pts90 = usTo90k(ptsUs)
         maybePatPmt()
@@ -48,7 +50,8 @@ class TsMuxer(
         writePes(videoPid, streamId = 0xE0, payload = payload, pts90 = pts90, withPcr = true)
     }
 
-    /** 第二阶段：喂一个 AAC-LC 裸帧（去 ADTS 头）。 */
+    /** 第二阶段：喂一个 AAC-LC 帧（PES 负载须带 ADTS 头——TS 里 AAC 靠 ADTS 同步帧界）。 */
+    @Synchronized
     fun writeAudioFrame(data: ByteArray, ptsUs: Long) {
         val pid = audioPid ?: return
         maybePatPmt()
@@ -115,11 +118,12 @@ class TsMuxer(
 
     // ---- PES ----
     private fun writePes(pid: Int, streamId: Int, payload: ByteArray, pts90: Long, withPcr: Boolean) {
-        // PES 头：00 00 01 + stream_id + packet_length(0=不限) + '10'flags + PTS
+        // PES 头：00 00 01 + stream_id + packet_length + '10'flags + PTS
+        // packet_length：视频=0（无限长直播流惯例）；音频按规范必须给实长（仅视频允许 0）
         val pes = ByteArray(9 + 5 + payload.size)
         pes[2] = 1                                      // start_code_prefix 00 00 01（前两位默认 0）
         pes[3] = streamId.toByte()
-        put16(pes, 4, 0)                                // PES_packet_length = 0（视频无限长流惯例）
+        put16(pes, 4, if (streamId == 0xC0) 8 + payload.size else 0)
         pes[6] = 0x80.toByte()                          // '10' + 无加扰 + 无优先级
         pes[7] = 0x80.toByte()                          // PTS only
         pes[8] = 5                                      // header_data_length

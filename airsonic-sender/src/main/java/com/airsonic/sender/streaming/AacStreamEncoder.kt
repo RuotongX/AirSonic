@@ -11,17 +11,19 @@ import java.nio.ByteBuffer
 
 /**
  * 实时 AAC-LC 编码器：start() 后反复 encode(pcm) 喂 PCM16-LE（44100/2ch），
- * 每产出一帧裸 AAC 即加 ADTS 头通过 onFrame 回调。stop() 释放。
- * 注意：单线程使用（捕获线程内同步喂入/取出）。
+ * 每产出一帧裸 AAC 即加 ADTS 头通过 onFrame 回调（附带按采样数推算的 ptsUs，TS 声画同步用）。
+ * stop() 释放。注意：单线程使用（捕获线程内同步喂入/取出）。
  */
 class AacStreamEncoder(
     private val sampleRate: Int = 44100,
     private val channels: Int = 2,
     private val bitRate: Int = 128_000,
-    private val onFrame: (ByteArray) -> Unit
+    private val onFrame: (frame: ByteArray, ptsUs: Long) -> Unit
 ) {
     private var codec: MediaCodec? = null
     private val bufInfo = MediaCodec.BufferInfo()
+    /** 已累计喂入的 PCM 字节数 → 输入 pts 推算（MediaCodec 会把输入 pts 透传到对应输出帧）。 */
+    private var fedBytes = 0L
 
     fun start() {
         val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels).apply {
@@ -53,7 +55,9 @@ class AacStreamEncoder(
             inBuf.clear()
             val n = minOf(inBuf.remaining(), pcm.size - offset)
             inBuf.put(pcm, offset, n)
-            c.queueInputBuffer(inIdx, 0, n, 0, 0)
+            // pts = 已喂字节数 / 字节率（PCM16-LE：sampleRate*channels*2 B/s）
+            c.queueInputBuffer(inIdx, 0, n, fedBytes * 1_000_000L / (sampleRate * channels * 2), 0)
+            fedBytes += n
             offset += n
         }
         drain(c)
@@ -70,7 +74,7 @@ class AacStreamEncoder(
                 outBuf.position(bufInfo.offset)
                 outBuf.get(aac)
                 val adts = adtsHeader(sampleRate, channels, aac.size)
-                onFrame(adts + aac)
+                onFrame(adts + aac, bufInfo.presentationTimeUs)
             }
             c.releaseOutputBuffer(outIdx, false)
         }

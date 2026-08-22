@@ -556,7 +556,7 @@ object CastEngine {
             if (!wav) {
                 val encoder = com.airsonic.sender.streaming.AacStreamEncoder(
                     sampleRate = 44100, channels = 2
-                ) { frame -> server.push(frame) }
+                ) { frame, _ -> server.push(frame) }
                 encoder.start(); enc = encoder
             }
 
@@ -655,6 +655,8 @@ object CastEngine {
             var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
             var ctl: DlnaController? = null
             var endMsg: String? = null   // 电视端断开时的收尾文案（优先级高于「已停止」）
+            var audioCap: SystemAudioCapture? = null
+            var audioEnc: com.airsonic.sender.streaming.AacStreamEncoder? = null
             try {
                 var waited = 0
                 while (!CaptureProjectionService.isForeground && waited < 2000) { delay(50); waited += 50 }
@@ -674,8 +676,13 @@ object CastEngine {
                 val scale = minOf(1f, 1920f / maxOf(m.widthPixels, m.heightPixels))
                 val w = ((m.widthPixels * scale).toInt() + 1) / 2 * 2
                 val h = ((m.heightPixels * scale).toInt() + 1) / 2 * 2
+                // 有 RECORD_AUDIO 才开音轨（用户在授权弹窗拒绝也能降级为纯画面镜像）
+                val withAudio = androidx.core.content.ContextCompat.checkSelfPermission(
+                    app, android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                 val c = com.airsonic.sender.screen.ScreenMirrorCaster(
                     width = w, height = h, dpi = m.densityDpi, bitRate = 10_000_000,
+                    withAudio = withAudio,
                     emit = { pkt -> srv.push(pkt) },   // 丢包自愈(drop-until-IDR)在 caster 内部
                     onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
                 )
@@ -688,6 +695,32 @@ object CastEngine {
                 // 等编码器产出 SPS/PPS（首帧配置），最多 2s
                 var wr = 0; while (!c.ready && wr < 2000) { delay(50); wr += 50 }
                 if (!c.ready) { fail("${L10n.s.setupFail}: 编码器无输出", gen); return@launch }
+                // 声画同投：复用同一 MediaProjection 起 AudioPlaybackCapture → AAC → TS 音轨。
+                // 捕获失败（目标 App 禁录/ROM 限制）不致命：降级纯画面，状态行能看到「无音轨」。
+                var audioOn = false
+                if (withAudio) {
+                    runCatching {
+                        val cap = SystemAudioCapture()
+                        if (cap.start(proj)) {
+                            val aenc = com.airsonic.sender.streaming.AacStreamEncoder(
+                                sampleRate = 44100, channels = 2
+                            ) { frame, pts -> c.writeAudioFrame(frame, pts) }
+                            aenc.start()
+                            audioCap = cap; audioEnc = aenc; audioOn = true
+                            // 泵线程：readChunk 阻塞定速，AAC 帧随视频一起进 TS
+                            thread(isDaemon = true, name = "airsonic-mirror-audio") {
+                                try {
+                                    while (casting && gen == sessionGen) {
+                                        val pcm = cap.readChunk(4096) ?: break
+                                        if (pcm.isNotEmpty()) aenc.encode(pcm)
+                                    }
+                                } catch (t: Throwable) {
+                                    android.util.Log.w("CastEngine", "mirror audio pump exit: ${t.message}")
+                                }
+                            }
+                        } else android.util.Log.w("CastEngine", "mirror: AudioPlaybackCapture 启动失败，纯画面降级")
+                    }.onFailure { android.util.Log.w("CastEngine", "mirror audio init: ${it.message}") }
+                }
                 val localIp = localIpForTarget(device.host)
                     ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${srv.path}"
@@ -698,7 +731,8 @@ object CastEngine {
                 device.renderingControlUrl?.let {
                     bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
                 }
-                activeCodec.value = "H.264/TS ${w}x${h}｜投…｜流=$localIp:$port"
+                val fmtLabel = "H.264${if (audioOn) "+AAC" else ""}/TS"
+                activeCodec.value = "$fmtLabel ${w}x${h}｜投…｜流=$localIp:$port"
                 delay(500)   // 让编码流先产数据，渲染器一连即有内容（Sonos 同款时序经验）
                 if (!withContext(Dispatchers.IO) { dc.setUri(url, didl) }) {
                     fail("${L10n.s.castError}${dc.lastError}", gen); return@launch
@@ -716,7 +750,7 @@ object CastEngine {
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
-                    activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
+                    activeCodec.value = "$fmtLabel ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
                     if (srv.connections > 0) { hadSub = true; gonePolls = 0; continue }
                     val stopped = st == "STOPPED" || st == "NO_MEDIA_PRESENT"
                     gonePolls = if (hadSub || stopped) gonePolls + 1 else 0
@@ -728,6 +762,8 @@ object CastEngine {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
                 withContext(NonCancellable) {
+                    runCatching { audioCap?.stop() }
+                    runCatching { audioEnc?.stop() }
                     runCatching { caster?.stop() }
                     runCatching { projection?.stop() }   // 否则系统投屏指示常驻、干扰下次授权
                     runCatching { server?.stop() }

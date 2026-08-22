@@ -156,6 +156,22 @@ class TsMuxerTest {
         val dir = java.io.File("build/tsmuxer"); dir.mkdirs()
         java.io.File(dir, "sample.ts").writeBytes(ts)
         assertTrue(ts.size > 120 * 188)
+
+        // 声画样本：audioPid 开 AAC 音轨，ADTS 假帧验证结构（ffprobe 应列出 video+audio 两条流）
+        val out = java.io.ByteArrayOutputStream()
+        val m2 = TsMuxer(audioPid = 0x102) { pkt -> out.write(pkt) }
+        m2.setSpsPps(sps, pps)
+        for (i in 0 until 120) {
+            val idr = i % 30 == 0
+            val nal = ByteArray(1500) { (it + i).toByte() }
+            nal[0] = 0; nal[1] = 0; nal[2] = 0; nal[3] = 1
+            nal[4] = if (idr) 0x65 else 0x41
+            m2.writeVideoFrame(nal, ptsUs = i * 33_333L, keyframe = idr)
+            // ADTS 头(7B) + 假负载；pts 按 AAC 帧率 44100/1024 ≈ 23.2ms/帧
+            val adts = byteArrayOf(0xFF.toByte(), 0xF1.toByte(), 0x50, 0x40, 0x02, 0xDF.toByte(), 0xFC.toByte()) + ByteArray(10)
+            m2.writeAudioFrame(adts, ptsUs = i * 23_219L)
+        }
+        java.io.File(dir, "sample_av.ts").writeBytes(out.toByteArray())
     }
 
     private fun read32(b: ByteArray, off: Int): Long =

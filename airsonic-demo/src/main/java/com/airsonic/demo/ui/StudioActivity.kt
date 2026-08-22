@@ -43,7 +43,14 @@ class StudioActivity : ComponentActivity() {
             }
         }
 
-    /** 应用内屏幕镜像（DLNA）：纯录屏无音轨，不需要 RECORD_AUDIO，直接发起 MediaProjection 授权。 */
+    /** 应用内屏幕镜像（DLNA）：音轨需要 RECORD_AUDIO（拒绝则降级纯画面镜像）。 */
+    private val mirrorRecordPerm =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // 不管是否授予都继续发起录屏授权；有无权限决定 TS 里带不带 AAC 音轨
+            mirrorProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+        }
+
+    /** 应用内屏幕镜像（DLNA）：录屏+系统声音（AudioPlaybackCapture→AAC 音轨，声画同投）。 */
     private val mirrorProjectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK && result.data != null) {
@@ -61,7 +68,13 @@ class StudioActivity : ComponentActivity() {
 
         val actions = CastActions(
             requestSystemAudioCast = { ensurePermThenProjection() },
-            requestScreenMirrorCast = { mirrorProjectionLauncher.launch(projectionManager.createScreenCaptureIntent()) },
+            requestScreenMirrorCast = {
+                // 已有录音权限直接录屏；没有先补权限（拒绝也继续，降级纯画面）
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED
+                ) mirrorProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                else mirrorRecordPerm.launch(Manifest.permission.RECORD_AUDIO)
+            },
             openDebug = { startActivity(Intent(this, MainActivity::class.java)) },
         )
 
