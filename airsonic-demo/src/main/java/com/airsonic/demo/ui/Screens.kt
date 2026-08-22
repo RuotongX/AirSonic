@@ -106,6 +106,7 @@ class CastActions(
     val requestSystemAudioCast: () -> Unit,
     val requestScreenMirrorCast: () -> Unit,
     val openDebug: () -> Unit,
+    val requestHttpStream: () -> Unit,
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -590,6 +591,24 @@ private fun CastZone() {
                     Spacer(Modifier.height(6.dp))
                     Text("${L10n.s.codecLabel} $codec", color = Aurora.TextDim, fontSize = 11.sp)
                 }
+                // HTTP 流输出：显示直播地址 + 一键复制
+                CastEngine.httpStreamUrl.value?.let { url ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth().glass(radius = 12).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(url, color = Aurora.Cyan, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            L10n.s.copyUrl, color = Aurora.Cyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable {
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("airsonic", url))
+                                android.widget.Toast.makeText(ctx, L10n.s.copied, android.widget.Toast.LENGTH_SHORT).show()
+                            }.padding(start = 10.dp),
+                        )
+                    }
+                }
             }
         CastPhase.CONNECTING -> Text(status, color = Aurora.Cyan, fontSize = 14.sp)
         CastPhase.ERROR -> Text(status, color = Aurora.Magenta, fontSize = 14.sp)
@@ -648,6 +667,21 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             ) {
                 if (soundOn) Text("✓", color = Color(0xFF00131A), fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        // HTTP 流输出（AirMusic 式）：不选设备，生成直播地址给任意播放器
+        Row(
+            Modifier.fillMaxWidth().glass(radius = 16)
+                .clickable { actions.requestHttpStream() }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(s.httpStreamTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(s.httpStreamSub, color = Aurora.TextDim, fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(24.dp))
         if (phase != CastPhase.CASTING) {

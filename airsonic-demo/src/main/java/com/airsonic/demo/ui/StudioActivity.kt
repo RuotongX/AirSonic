@@ -60,6 +60,25 @@ class StudioActivity : ComponentActivity() {
             }
         }
 
+    /** HTTP 流输出：同一套 录音权限→录屏授权 链，只是不推设备、暴露直播地址。 */
+    private val httpStreamRecordPerm =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) httpStreamProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+            else {
+                CastEngine.phase.value = CastPhase.ERROR
+                CastEngine.statusLine.value = if (L10n.lang.value == Lang.EN) "Microphone permission denied" else "未授予录音权限"
+            }
+        }
+
+    private val httpStreamProjectionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                CastEngine.startHttpStreamCast(this, result.resultCode, result.data!!)
+            } else {
+                CastEngine.statusLine.value = if (L10n.lang.value == Lang.EN) "Screen-capture canceled" else "已取消投屏授权"
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         L10n.load(this)   // 载入已保存语言
@@ -76,6 +95,12 @@ class StudioActivity : ComponentActivity() {
                 else mirrorRecordPerm.launch(Manifest.permission.RECORD_AUDIO)
             },
             openDebug = { startActivity(Intent(this, MainActivity::class.java)) },
+            requestHttpStream = {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED
+                ) httpStreamProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                else httpStreamRecordPerm.launch(Manifest.permission.RECORD_AUDIO)
+            },
         )
 
         setContent {

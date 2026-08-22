@@ -136,6 +136,8 @@ object CastEngine {
     val volumePct = mutableStateOf(50)
     /** 音量下发被设备拒绝/无响应（海信 VIDAA 等）→ UI 在滑块下提示用遥控器。 */
     val volumeWarn = mutableStateOf(false)
+    /** HTTP 流输出模式的直播地址（非 null 时 CastZone 显示可复制地址）。 */
+    val httpStreamUrl = mutableStateOf<String?>(null)
     /** 是否静音。 */
     val muted = mutableStateOf(false)
     /** 是否已绑定音量后端（驱动 UI 控件显隐）。 */
@@ -778,6 +780,86 @@ object CastEngine {
                         startedAt.value = 0L; level.value = 0f
                         spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
                         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = endMsg ?: L10n.s.stopped }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * HTTP 流输出（AirMusic 式）：不推任何设备，把系统声音以 AAC 直播 URL 暴露到局域网，
+     * VLC/浏览器/任何能播 URL 的播放器都能收听。无远端音量 → 滑块走本地增益（PCM 乘增益）。
+     */
+    fun startHttpStreamCast(context: Context, resultCode: Int, data: Intent) {
+        val app = context.applicationContext
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} …"
+        casting = true
+        castLocksAcquire(app)
+        val gen = ++sessionGen
+        sessionJob?.cancel()
+        CaptureProjectionService.start(app)
+        sessionJob = engineScope.launch {
+            var cap: SystemAudioCapture? = null
+            var enc: com.airsonic.sender.streaming.AacStreamEncoder? = null
+            var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
+            var projection: android.media.projection.MediaProjection? = null
+            try {
+                var waited = 0
+                while (!CaptureProjectionService.isForeground && waited < 2000) { delay(50); waited += 50 }
+                val proj = withContext(Dispatchers.IO) {
+                    val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    pm.getMediaProjection(resultCode, data)
+                }
+                projection = proj
+                val srv = com.airsonic.sender.streaming.LiveAudioHttpServer()   // audio/aac 无限长流
+                server = srv
+                val port = withContext(Dispatchers.IO) { srv.start() }
+                val c = SystemAudioCapture()
+                if (!c.start(proj)) { fail(L10n.s.captureFail, gen); return@launch }
+                cap = c
+                val gainCtl = GainVolumeController()
+                val e = com.airsonic.sender.streaming.AacStreamEncoder(44100, 2) { frame, _ -> srv.push(frame) }
+                e.start(); enc = e
+                val localIp = localWifiIp() ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
+                val url = "http://$localIp:$port${srv.path}"
+                httpStreamUrl.value = url
+                bindVolume(gainCtl, defaultPct = 100)
+                thread(isDaemon = true, name = "airsonic-httpstream-pump") {
+                    try {
+                        while (casting && gen == sessionGen) {
+                            val pcm = c.readChunk(4096) ?: break
+                            if (pcm.isEmpty()) continue
+                            updateMeters(pcm)
+                            scalePcm16(pcm, pcm.size, gainCtl.gain)
+                            e.encode(pcm)
+                        }
+                    } catch (t: Throwable) {
+                        android.util.Log.w("CastEngine", "http stream pump exit: ${t.message}")
+                    }
+                }
+                onCastingStarted(L10n.s.httpStreamName)
+                activeCodec.value = "AAC｜$url"
+                while (isActive && casting && gen == sessionGen) delay(2000)   // 无设备可轮询，挂着等停止
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}", gen)
+            } finally {
+                withContext(NonCancellable) {
+                    runCatching { cap?.stop() }
+                    runCatching { enc?.stop() }
+                    runCatching { server?.stop() }
+                    runCatching { projection?.stop() }
+                    if (gen == sessionGen) {
+                        casting = false
+                        castLocksRelease()
+                        unbindVolume()
+                        httpStreamUrl.value = null
+                        runCatching { CaptureProjectionService.stop(app) }
+                        startedAt.value = 0L; level.value = 0f
+                        spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
+                        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
                     }
                 }
             }

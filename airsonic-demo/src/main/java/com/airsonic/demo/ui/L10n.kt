@@ -118,6 +118,11 @@ data class Strings(
     val volumeUnsupported: String,  // 音量下发失败提示（设备不支持）
     val bgKeepHint: String,         // 后台保活引导（点按跳系统设置）
     val cleanedLastSession: String, // 冷启动清理上次投送残留
+    val httpStreamTitle: String,    // HTTP 流输出（AirMusic 式直播地址）
+    val httpStreamSub: String,      // 复制地址，任意播放器可收听
+    val httpStreamName: String,     // 投送中的设备名占位（无目标设备）
+    val copyUrl: String,            // 复制地址
+    val copied: String,             // 已复制
 )
 
 private val ZH = Strings(
@@ -186,6 +191,11 @@ private val ZH = Strings(
     volumeUnsupported = "音量控制未送达：该设备可能不支持，请用电视遥控器",
     bgKeepHint = "切后台断流？点我跳系统设置允许后台运行（vivo 另需开：自启动 + 后台高耗电）",
     cleanedLastSession = "检测到上次投送未正常结束，已通知电视停止",
+    httpStreamTitle = "HTTP 流输出",
+    httpStreamSub = "生成直播地址，VLC/浏览器/任意播放器均可收听",
+    httpStreamName = "HTTP 流",
+    copyUrl = "复制地址",
+    copied = "已复制到剪贴板",
 )
 
 private val EN = Strings(
@@ -254,6 +264,11 @@ private val EN = Strings(
     volumeUnsupported = "Volume command not accepted by this device — use the TV remote",
     bgKeepHint = "Drops when backgrounded? Tap to allow background run (vivo: also enable auto-start + background high power)",
     cleanedLastSession = "Previous cast did not end cleanly — stop sent to the TV",
+    httpStreamTitle = "HTTP stream out",
+    httpStreamSub = "Get a live URL — VLC, browsers or any player can tune in",
+    httpStreamName = "HTTP stream",
+    copyUrl = "Copy URL",
+    copied = "Copied to clipboard",
 )
 
 object L10n {
