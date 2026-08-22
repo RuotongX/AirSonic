@@ -115,6 +115,9 @@ data class Strings(
     val privacyBody: String,
     val viewFullOnGitHub: String,   // 在 GitHub 查看完整条款
     val volumeLabel: String,        // 投送中音量标签
+    val mirrorInAppTitle: String,   // 应用内投屏（DLNA 实时屏幕流）
+    val mirrorInAppSub: String,     // 录屏实时投到选中设备…延迟说明
+    val mirrorNeedsDlna: String,    // 应用内投屏需选中 DLNA 设备
 )
 
 private val ZH = Strings(
@@ -179,6 +182,9 @@ private val ZH = Strings(
         "偏好设置与 AirPlay 配对凭据仅存于本机应用私有目录,卸载即清除。",
     viewFullOnGitHub = "在 GitHub 查看完整条款",
     volumeLabel = "音量",
+    mirrorInAppTitle = "应用内投屏",
+    mirrorInAppSub = "录屏实时投到选中的 DLNA 设备（坚果等），延迟约 1~3 秒",
+    mirrorNeedsDlna = "应用内投屏需先在首页选中 DLNA 设备（如坚果投影）；其他设备请用上方系统投屏",
 )
 
 private val EN = Strings(
@@ -243,6 +249,9 @@ private val EN = Strings(
         "Preferences and AirPlay pairing credentials are stored only in the app's private storage and removed on uninstall.",
     viewFullOnGitHub = "View full text on GitHub",
     volumeLabel = "Volume",
+    mirrorInAppTitle = "In-app screen cast",
+    mirrorInAppSub = "Mirror your screen live to the selected DLNA device (JMGO etc.), ~1–3s delay",
+    mirrorNeedsDlna = "In-app casting needs a DLNA device selected on Home (e.g. JMGO projector); for others use system cast above",
 )
 
 object L10n {

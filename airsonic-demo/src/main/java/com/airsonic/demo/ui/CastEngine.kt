@@ -550,6 +550,105 @@ object CastEngine {
         }
     }
 
+    /**
+     * 应用内屏幕镜像（DLNA 实时屏幕流）：录屏 H.264 → MPEG-TS → HTTP 直播 → SetAVTransportURI+Play。
+     * 目标设备是坚果等 DLNA 渲染器（无 Miracast、AirPlay 未开时的自研路线）。
+     * 时序沿用 Sonos 经验：编码器先跑、流产出数据后再 Play。延迟预期 1~3s（播放器缓冲）。
+     */
+    fun startScreenMirrorCast(context: Context, resultCode: Int, data: Intent) {
+        val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
+        if (device.type != DeviceType.DLNA || device.controlUrl == null) {
+            statusLine.value = L10n.s.mirrorNeedsDlna; phase.value = CastPhase.ERROR; return
+        }
+        val app = context.applicationContext
+        phase.value = CastPhase.CONNECTING
+        statusLine.value = "${L10n.s.connecting} ${device.name} …"
+        casting = true
+        val gen = ++sessionGen
+        sessionJob?.cancel()
+        CaptureProjectionService.start(app)
+        sessionJob = engineScope.launch {
+            var caster: com.airsonic.sender.screen.ScreenMirrorCaster? = null
+            var projection: android.media.projection.MediaProjection? = null
+            var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
+            var ctl: DlnaController? = null
+            try {
+                var waited = 0
+                while (!CaptureProjectionService.isForeground && waited < 2000) { delay(50); waited += 50 }
+                projection = withContext(Dispatchers.IO) {
+                    val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    pm.getMediaProjection(resultCode, data)
+                }
+                // 无限长 TS 直播流（LiveAudioHttpServer 实为内容无关扇出：换 contentType 即可）
+                val srv = com.airsonic.sender.streaming.LiveAudioHttpServer(
+                    contentType = "video/mp2t", pathExt = "ts")
+                server = srv
+                val port = withContext(Dispatchers.IO) { srv.start() }
+                // 最长边压到 1280，保宽高比、偶数对齐（H.264 yuv420 要求偶数）
+                val m = app.resources.displayMetrics
+                val scale = minOf(1f, 1280f / maxOf(m.widthPixels, m.heightPixels))
+                val w = ((m.widthPixels * scale).toInt() + 1) / 2 * 2
+                val h = ((m.heightPixels * scale).toInt() + 1) / 2 * 2
+                val c = com.airsonic.sender.screen.ScreenMirrorCaster(
+                    width = w, height = h, dpi = m.densityDpi,
+                    onTsPacket = { pkt -> srv.push(pkt) },
+                    onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
+                )
+                caster = c
+                val proj = projection ?: run { fail(L10n.s.setupFail, gen); return@launch }
+                if (!withContext(Dispatchers.IO) { c.start(proj) }) { fail(L10n.s.setupFail, gen); return@launch }
+                // 等编码器产出 SPS/PPS（首帧配置），最多 2s
+                var wr = 0; while (!c.ready && wr < 2000) { delay(50); wr += 50 }
+                if (!c.ready) { fail(L10n.s.setupFail, gen); return@launch }
+                val localIp = localIpForTarget(device.host)
+                    ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
+                val url = "http://$localIp:$port${srv.path}"
+                val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true)
+                val dc = DlnaController(device.controlUrl!!); ctl = dc; dlnaCtl = dc   // 入口已判非空
+                device.renderingControlUrl?.let {
+                    bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
+                }
+                activeCodec.value = "H.264/TS ${w}x${h}｜投…｜流=$localIp:$port"
+                delay(500)   // 让编码流先产数据，渲染器一连即有内容（Sonos 同款时序经验）
+                if (!withContext(Dispatchers.IO) { dc.setUri(url, didl) }) {
+                    fail("${L10n.s.castError}${dc.lastError}", gen); return@launch
+                }
+                if (!withContext(Dispatchers.IO) { dc.play() }) {
+                    fail("${L10n.s.castError}${dc.lastError}", gen); return@launch
+                }
+                if (!isActive || !casting || gen != sessionGen) return@launch
+                onCastingStarted(device.name)
+                // 诊断轮询（阻塞 SOAP 切 IO）：状态 + 实际拉流连接数
+                while (isActive && casting && gen == sessionGen) {
+                    delay(3000)
+                    val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
+                    activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}"
+                }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
+            } catch (t: Throwable) {
+                fail("${L10n.s.castError}${t.message}", gen)
+            } finally {
+                withContext(NonCancellable) {
+                    runCatching { caster?.stop() }
+                    runCatching { projection?.stop() }   // 否则系统投屏指示常驻、干扰下次授权
+                    runCatching { server?.stop() }
+                    // SOAP Stop 是阻塞网络请求 → 切线程，别拖 UI 复位
+                    ctl?.let { c2 -> thread(isDaemon = true, name = "airsonic-mirror-stop") { runCatching { c2.stop() } } }
+                    if (dlnaCtl === ctl) dlnaCtl = null
+                    if (gen == sessionGen) {
+                        casting = false
+                        unbindVolume()
+                        runCatching { CaptureProjectionService.stop(app) }
+                        startedAt.value = 0L; level.value = 0f
+                        spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
+                        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+                    }
+                }
+            }
+        }
+    }
+
     private fun dlnaCleanup(
         gen: Int,
         ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,

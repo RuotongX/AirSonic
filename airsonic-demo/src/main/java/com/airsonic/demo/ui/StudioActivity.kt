@@ -43,6 +43,16 @@ class StudioActivity : ComponentActivity() {
             }
         }
 
+    /** 应用内屏幕镜像（DLNA）：纯录屏无音轨，不需要 RECORD_AUDIO，直接发起 MediaProjection 授权。 */
+    private val mirrorProjectionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                CastEngine.startScreenMirrorCast(this, result.resultCode, result.data!!)
+            } else {
+                CastEngine.statusLine.value = if (L10n.lang.value == Lang.EN) "Screen-capture canceled" else "已取消投屏授权"
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         L10n.load(this)   // 载入已保存语言
@@ -51,6 +61,7 @@ class StudioActivity : ComponentActivity() {
 
         val actions = CastActions(
             requestSystemAudioCast = { ensurePermThenProjection() },
+            requestScreenMirrorCast = { mirrorProjectionLauncher.launch(projectionManager.createScreenCaptureIntent()) },
             openDebug = { startActivity(Intent(this, MainActivity::class.java)) },
         )
 
