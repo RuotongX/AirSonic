@@ -490,7 +490,7 @@ object CastEngine {
                 if (!withContext(Dispatchers.IO) { c.setUri(url, didl) }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
                 if (!withContext(Dispatchers.IO) { c.play() }) { fail("${L10n.s.castError}${c.lastError}", gen); return@launch }
                 onCastingStarted(device.name)
-                var soapFail = 0; var pollN = 0
+                var soapFail = 0; var pollN = 0; var lastPosAtCheck = -1.0
                 while (isActive && casting && gen == sessionGen) {
                     delay(1000)
                     val info = withContext(Dispatchers.IO) { c.getPositionInfo() }
@@ -505,10 +505,16 @@ object CastEngine {
                     if (++pollN % 5 == 0) {
                         val st = withContext(Dispatchers.IO) { c.getTransportInfo() }
                         if (st == "STOPPED" || st == "NO_MEDIA_PRESENT") {
-                            val done = info.second > 0 && info.first >= info.second - 2
-                            endMsg = if (done) L10n.s.playFinished else L10n.s.tvDisconnected
-                            break
+                            // 进度还在走 = 播放器状态误报（当贝缓冲态），别杀会话
+                            if (lastPosAtCheck >= 0 && info.first > lastPosAtCheck + 0.5) {
+                                // 活着，什么也不做
+                            } else if (lastPosAtCheck >= 0) {
+                                val done = info.second > 0 && info.first >= info.second - 2
+                                endMsg = if (done) L10n.s.playFinished else L10n.s.tvDisconnected
+                                break
+                            }
                         }
+                        lastPosAtCheck = info.first
                     }
                 }
             } catch (t: kotlinx.coroutines.CancellationException) {
@@ -703,18 +709,18 @@ object CastEngine {
                 if (!isActive || !casting || gen != sessionGen) return@launch
                 onCastingStarted(device.name)
                 // 诊断轮询（阻塞 SOAP 切 IO）：状态 + 拉流连接数 + 累计丢包（丢>0=下行拥塞）
-                var hadSub = false; var zeroPolls = 0
+                // 活着的第一判据是「电视还在拉流」(connections>0)——当贝缓冲直播流时传输状态会
+                // 停在 STOPPED 误报（v0.3.7 曾因此刚投上就误判断开），状态只能当辅证：
+                // 无拉流 且 (曾断订阅/状态STOPPED) 持续 12s 才判电视端断开。
+                var hadSub = false; var gonePolls = 0
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
                     activeCodec.value = "H.264/TS ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
-                    if (srv.connections > 0) { hadSub = true; zeroPolls = 0 }
-                    // 电视端停了（用户在电视上退出/播放器崩）或放弃拉流（持续 9s 无订阅者）
-                    // → 会话名存实亡：收尾退出投送态，别留僵尸读秒
-                    if (st == "STOPPED" || st == "NO_MEDIA_PRESENT"
-                        || (hadSub && srv.connections == 0 && ++zeroPolls >= 3)) {
-                        endMsg = L10n.s.tvDisconnected; break
-                    }
+                    if (srv.connections > 0) { hadSub = true; gonePolls = 0; continue }
+                    val stopped = st == "STOPPED" || st == "NO_MEDIA_PRESENT"
+                    gonePolls = if (hadSub || stopped) gonePolls + 1 else 0
+                    if (gonePolls >= 4) { endMsg = L10n.s.tvDisconnected; break }
                 }
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t
