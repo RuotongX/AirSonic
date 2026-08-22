@@ -21,7 +21,7 @@ data class Strings(
     val audio: String,
     val mirrorTitle: String,       // 手机镜像 / Phone Mirror
     val mirrorSub: String,
-    val mirrorPicture: String,     // 投画面（整屏，走系统投屏）/ Mirror screen
+    val mirrorPicture: String,     // 投画面（整屏，应用内投屏 DLNA）/ Mirror screen
     val resolution: String,
     val frameRate: String,
     val comingSoon: String,
@@ -96,10 +96,6 @@ data class Strings(
     val protoDlnaSub: String,       // 智能电视 · 盒子 · Kodi
     val tagAudio: String,           // 音频 / Audio
     val tagVideoAudio: String,      // 视频+音频 / Video+Audio
-    val screenMirrorTitle: String,  // 屏幕镜像 / Screen mirroring
-    val screenMirrorSub: String,    // 调起系统无线投屏…
-    val systemCastHint: String,     // 系统投屏入口路牌(华为等 AOSP 页为空)
-    val castSettingsUnavailable: String, // 未找到系统投屏设置
     val forceAlacTitle: String,     // 强制 ALAC 编码
     val forceAlacSub: String,       // Sonos 等只收 ALAC 的设备…
     val codecLabel: String,         // 编码 / Codec（投送时显示当前编码）
@@ -124,12 +120,12 @@ private val ZH = Strings(
     tagline = "把声音，投向空间",
     skip = "跳过", selectDevice = "选择设备", settings = "设置",
     localMedia = "投射本地媒体", video = "视频", audio = "音频",
-    mirrorTitle = "手机镜像", mirrorSub = "画面走系统投屏 · 声音走 AirPlay/Sonos",
+    mirrorTitle = "手机镜像", mirrorSub = "画面应用内投屏到电视 · 声音走 AirPlay/Sonos",
     mirrorPicture = "投画面",
     resolution = "分辨率", frameRate = "帧率", comingSoon = "即将推出",
     sound = "声音", soundOnly = "仅投声音",
     soundOnlyDesc = "实时把系统声音投到所选音箱（AirPlay/Sonos）",
-    soundInfo = "捕获系统音频，实时投到所选音箱（AirPlay/Sonos）。只投声音、不含画面；要投画面请用上方「投画面」的系统无线投屏。",
+    soundInfo = "捕获系统音频，实时投到所选音箱（AirPlay/Sonos）。只投声音、不含画面；要投画面请用上方「投画面」的应用内投屏。",
     startMirror = "开始投声音",
     castVideo = "投射视频", castAudio = "投射音频",
     needMedia = "需要访问本机媒体", grantDesc = "授权后即可浏览并投送文件", grant = "授权访问",
@@ -158,9 +154,6 @@ private val ZH = Strings(
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · 音箱 · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "智能电视 · 盒子 · Kodi",
     tagAudio = "音频", tagVideoAudio = "视频+音频",
-    screenMirrorTitle = "屏幕镜像", screenMirrorSub = "调起系统无线投屏，镜像整个屏幕到电视(Miracast)",
-    systemCastHint = "搜不到投影时改用手机自带「无线投屏/投屏」——华为见 设置›更多连接›手机投屏(自带发现更全)，坚果用配对码连接；看视频也可回首页用「视频」投文件",
-    castSettingsUnavailable = "本机未提供系统投屏设置",
     forceAlacTitle = "强制 ALAC 编码",
     forceAlacSub = "一般别开!普通音箱(小米等)强制 ALAC 会无声;只收 ALAC 的设备已自动探测",
     codecLabel = "编码",
@@ -184,19 +177,19 @@ private val ZH = Strings(
     volumeLabel = "音量",
     mirrorInAppTitle = "应用内投屏",
     mirrorInAppSub = "录屏实时投到选中的 DLNA 设备（坚果等），延迟约 1~3 秒",
-    mirrorNeedsDlna = "应用内投屏需先在首页选中 DLNA 设备（如坚果投影）；其他设备请用上方系统投屏",
+    mirrorNeedsDlna = "应用内投屏需先在首页选中 DLNA 设备（如坚果投影）",
 )
 
 private val EN = Strings(
     tagline = "Cast your sound into the room",
     skip = "Skip", selectDevice = "Select device", settings = "Settings",
     localMedia = "Local media", video = "Video", audio = "Audio",
-    mirrorTitle = "Phone Mirror", mirrorSub = "Screen via system cast · Sound via AirPlay/Sonos",
+    mirrorTitle = "Phone Mirror", mirrorSub = "Screen cast in-app to TV · Sound via AirPlay/Sonos",
     mirrorPicture = "Mirror screen",
     resolution = "Resolution", frameRate = "Frame rate", comingSoon = "Coming soon",
     sound = "Sound", soundOnly = "Sound only",
     soundOnlyDesc = "Live-cast system audio to the chosen speaker (AirPlay/Sonos)",
-    soundInfo = "Captures system audio and casts it live to the chosen speaker (AirPlay/Sonos). Sound only, no screen — for screen use the system wireless display above.",
+    soundInfo = "Captures system audio and casts it live to the chosen speaker (AirPlay/Sonos). Sound only, no screen — for screen use the in-app \"Mirror screen\" above.",
     startMirror = "Start sound cast",
     castVideo = "Cast video", castAudio = "Cast audio",
     needMedia = "Media access needed", grantDesc = "Grant access to browse and cast files", grant = "Grant access",
@@ -225,9 +218,6 @@ private val EN = Strings(
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · Speakers · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "Smart TV · Box · Kodi",
     tagAudio = "Audio", tagVideoAudio = "Video+Audio",
-    screenMirrorTitle = "Screen mirroring", screenMirrorSub = "Open system wireless display to mirror your screen to a TV (Miracast)",
-    systemCastHint = "No device shown? Use your phone's built-in Wireless Projection — on Huawei: Settings › More connections › Phone Projection (its own finder is more complete); connect JMGO with the PIN. For video you can also cast a file from the Video entry",
-    castSettingsUnavailable = "System cast settings not available on this device",
     forceAlacTitle = "Force ALAC",
     forceAlacSub = "Usually keep OFF! Forcing ALAC silences PCM speakers (e.g. Xiaomi); ALAC-only devices are auto-detected",
     codecLabel = "Codec",
@@ -251,7 +241,7 @@ private val EN = Strings(
     volumeLabel = "Volume",
     mirrorInAppTitle = "In-app screen cast",
     mirrorInAppSub = "Mirror your screen live to the selected DLNA device (JMGO etc.), ~1–3s delay",
-    mirrorNeedsDlna = "In-app casting needs a DLNA device selected on Home (e.g. JMGO projector); for others use system cast above",
+    mirrorNeedsDlna = "In-app casting needs a DLNA device selected on Home (e.g. JMGO projector)",
 )
 
 object L10n {
