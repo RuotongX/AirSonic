@@ -145,7 +145,7 @@ class PairingHandshake(
         val salt = tlv2[Tlv8.Type.SALT]
         val serverPub = tlv2[Tlv8.Type.PUBLIC_KEY]
         if (salt == null || serverPub == null) {
-            onStep(Step.Failure("M2 缺少 salt/serverPub，keys=${tlv2.keys}"))
+            onStep(Step.Failure("M2 缺少 salt/serverPub，keys=${tlv2.keys} body=${resp1.body.size}B"))
             return false
         }
         onStep(Step.Info("收到 M2: salt=${salt.size}B, B=${serverPub.size}B"))

@@ -146,6 +146,28 @@ class AirplayHttpClient(
             }
         }
 
+        val te = headers["transfer-encoding"]?.lowercase()
+        if (te != null && "chunked" in te) {
+            // chunked 编码（tvOS 部分响应无 Content-Length）：逐块解码
+            val bodyOut = java.io.ByteArrayOutputStream()
+            while (true) {
+                val sizeLine = readAsciiLine(input) ?: break
+                if (sizeLine.isEmpty()) continue
+                val chunkSize = sizeLine.substringBefore(';').trim().toIntOrNull(16) ?: break
+                if (chunkSize == 0) { readAsciiLine(input); break }   // 尾块后的 CRLF（trailers 忽略）
+                var remaining = chunkSize
+                val buf = ByteArray(minOf(remaining, 8192))
+                while (remaining > 0) {
+                    val n = input.read(buf, 0, minOf(buf.size, remaining))
+                    if (n == -1) break
+                    bodyOut.write(buf, 0, n); remaining -= n
+                }
+                readAsciiLine(input)                                  // 块尾 CRLF
+            }
+            Log.d(TAG, "Response status=$statusCode chunked bodyLen=${bodyOut.size()}")
+            return Response(statusCode, headers, bodyOut.toByteArray())
+        }
+
         val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
         val body = ByteArray(contentLength)
         var read = 0
@@ -156,6 +178,17 @@ class AirplayHttpClient(
         }
         Log.d(TAG, "Response status=$statusCode bodyLen=$read")
         return Response(statusCode, headers, body.copyOf(read))
+    }
+
+    /** 读一行 ASCII（到 \n 为止，去掉尾部 \r）；流结束返回 null。 */
+    private fun readAsciiLine(input: BufferedInputStream): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val b = input.read()
+            if (b == -1) return if (sb.isEmpty()) null else sb.toString()
+            if (b == '\n'.code) return sb.toString()
+            if (b != '\r'.code) sb.append(b.toChar())
+        }
     }
 
     companion object {
