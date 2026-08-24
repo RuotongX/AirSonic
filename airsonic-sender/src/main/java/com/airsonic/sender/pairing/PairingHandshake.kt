@@ -58,12 +58,18 @@ class PairingHandshake(
         data class Failure(val message: String, val cause: Throwable? = null) : Step()
     }
 
+    /** pair-pin-start 的 HTTP 状态码（诊断用；-1=请求异常）。 */
+    var lastPinStartStatus: Int = -1
+        private set
+
     /**
      * pair-pin-start：请求接收端（Apple TV 等）在屏幕显示 4 位配对 PIN。
      * 之后用该 PIN 走非 transient pairSetup(pin)。实测 Apple TV 返回 200。
      */
     fun pairPinStart(): Boolean = runCatching {
-        http.post("/pair-pin-start", ByteArray(0), extraHeaders = mapOf("X-Apple-HKP" to "3")).statusCode in 200..299
+        val code = http.post("/pair-pin-start", ByteArray(0), extraHeaders = mapOf("X-Apple-HKP" to "3")).statusCode
+        lastPinStartStatus = code
+        code in 200..299
     }.getOrDefault(false)
 
     /**

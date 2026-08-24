@@ -1179,8 +1179,10 @@ object CastEngine {
         if (PairingStore.isPaired(app, device.host)) {
             val hs = newHs(app, device)
             hs.knownAccessoryLtpk = PairingStore.accessoryLtpk(app, device.host)   // 有存即强制验签
-            if (hs.pairVerify {}) return hs
+            var step = ""
+            if (hs.pairVerify { s -> if (s is PairingHandshake.Step.Failure) step = s.message }) return hs
             PairingStore.unpair(app, device.host)   // 对方已忘 → 清除重配
+            android.util.Log.w("CastEngine", "pair-verify 失败，重配: $step")
         }
         // 2) transient（开放设备：HomePod/Sonos/小米/无密码 Apple TV）→ 同连接即会话
         run {
@@ -1191,19 +1193,26 @@ object CastEngine {
         if (!doPinSetup(app, device)) return null
         val hs = newHs(app, device)
         hs.knownAccessoryLtpk = PairingStore.accessoryLtpk(app, device.host)
-        return if (hs.pairVerify {}) hs else { PairingStore.unpair(app, device.host); fail(L10n.s.pairFail); null }
+        var step = ""
+        return if (hs.pairVerify { s -> if (s is PairingHandshake.Step.Failure) step = s.message }) hs
+            else { PairingStore.unpair(app, device.host); fail("${L10n.s.pairFail} verify:$step"); null }
     }
 
     /** PIN pair-setup（完整 M1-M6 交换 Ed25519 身份并持久化），不在此连接建会话。 */
     private fun doPinSetup(app: Context, device: AirDevice): Boolean {
         val hs = newHs(app, device)
-        if (!hs.pairPinStart()) { fail(L10n.s.pairFail); pinAborted = true; return false }
+        if (!hs.pairPinStart()) {
+            fail("${L10n.s.pairFail} pinStart:${hs.lastPinStartStatus}"); pinAborted = true; return false
+        }
         pinQueue.clear()
         pinNonce.value++
         pinRequest.value = device.name
         val pin = try { pinQueue.poll(120, java.util.concurrent.TimeUnit.SECONDS) } finally { pinRequest.value = null }
         if (pin == null || pin == PIN_CANCEL) { pinAborted = true; return false }
-        if (!hs.pairSetup(pin, onStep = {}, transient = false)) { fail(L10n.s.pairFail); pinAborted = true; return false }
+        var step = ""
+        if (!hs.pairSetup(pin, onStep = { s -> if (s is PairingHandshake.Step.Failure) step = s.message }, transient = false)) {
+            fail("${L10n.s.pairFail} setup:$step"); pinAborted = true; return false
+        }
         PairingStore.markPaired(app, device.host)
         hs.lastAccessoryLtpk?.let { PairingStore.saveAccessoryLtpk(app, device.host, it) }   // M6 已验签的 LTPK 落库
         return true
