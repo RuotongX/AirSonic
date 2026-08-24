@@ -70,6 +70,11 @@ class AirplayVideoController(
         val timingPort = runCatching { tsrv.start(0) }.getOrDefault(0)
         timingServer = tsrv
 
+        // macOS 接收器首次 SETUP 要弹「允许隔空投放」等用户点（最长 15s），默认 5s 读超时必死
+        val sock = runCatching { handshake.httpClient.rawSocket() }.getOrNull()
+        val oldSoTimeout = runCatching { sock?.soTimeout }.getOrNull()
+        runCatching { sock?.soTimeout = 20000 }
+
         // 2) SETUP#1（RTSP，无 streams）→ eventPort
         //    tvOS 26 新流程要求带 sessionCorrelationUUID（pyatv airplayv2 `_setup_base`）；
         //    老设备忽略该字段，故两条流程共用此 SETUP。
@@ -93,6 +98,7 @@ class AirplayVideoController(
         )
         val r1 = rtsp("SETUP", BPlist.encode(setup1), BPLIST_CONTENT_TYPE) ?: return false
         if (r1.status !in 200..299) { Log.w(TAG, "SETUP#1 -> ${r1.status}"); return false }
+        runCatching { if (oldSoTimeout != null) sock?.soTimeout = oldSoTimeout }
         @Suppress("UNCHECKED_CAST")
         val pl1 = runCatching { BPlist.decode(r1.body) as? Map<Any?, Any?> }.getOrNull()
         val eventPort = (pl1?.get("eventPort") as? Number)?.toInt() ?: 0
@@ -236,6 +242,21 @@ class AirplayVideoController(
 
     fun stop(): Boolean =
         (httpReq("POST", "/stop", ByteArray(0), null)?.status ?: -1) in 200..299
+
+    /** 音量实验 A：play-queue setProperty volume（0.0~1.0）。需新流程已建 streamID。 */
+    fun setVolumeCommand(vol: Double): Boolean {
+        if (playQueueStreamId == null) return false
+        val r = sendCommand(linkedMapOf("type" to "setProperty", "value" to vol, "property" to "volume"))
+        return (r?.status ?: -1) in 200..299
+    }
+
+    /** 音量实验 B：老 AirPlay1 风格 POST /volume?value=（0.0~1.0）。 */
+    fun setVolumeHttp(vol: Double): Boolean =
+        (httpReq("POST", "/volume?value=$vol", ByteArray(0), null)?.status ?: -1) in 200..299
+
+    /** 音量实验 C：RTSP SET_PARAMETER volume（RAOP 风格 dB，-30..0，-144 静音）。 */
+    fun setVolumeRtsp(db: Double): Boolean =
+        (rtsp("SET_PARAMETER", "volume: $db\r\n".toByteArray(Charsets.US_ASCII), "text/parameters")?.status ?: -1) in 200..299
 
     fun close() {
         runCatching { eventChannel?.stop() }; eventChannel = null

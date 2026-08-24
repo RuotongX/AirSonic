@@ -30,6 +30,7 @@ import com.airsonic.sender.dlna.buildDidl
 import com.airsonic.sender.pairing.PairingHandshake
 import com.airsonic.sender.api.VolumeController
 import com.airsonic.sender.api.AirplayVolumeController
+import com.airsonic.sender.api.AirplayVideoVolumeController
 import com.airsonic.sender.api.UpnpVolumeController
 import com.airsonic.sender.api.GainVolumeController
 import com.airsonic.sender.dlna.RenderingControlController
@@ -444,6 +445,7 @@ object CastEngine {
                 if (!withContext(Dispatchers.IO) { c.connect() }) { fail(L10n.s.setupFail, gen); return@launch }
                 videoCtl = c
                 if (!withContext(Dispatchers.IO) { c.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
+                bindVolume(AirplayVideoVolumeController(c), defaultPct = 100)
                 onCastingStarted(device.name)
                 while (isActive && casting && gen == sessionGen) {
                     delay(1000)

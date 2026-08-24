@@ -75,6 +75,24 @@ class AppleTvHarnessTest {
             // tvOS 26 play-queue 流程下 /playback-info 恒 500，playbackInfo() 降级返回 null 属正常
             println(">>> playbackInfo=${ctl.playbackInfo()}（新流程下为 null）")
             println(">>> 观察 TV 是否出画面（8s 内）")
+            // 音量探针：ATV_VOLPROBE=A 只试 play-queue setProperty；=C 只试 RTSP SET_PARAMETER。
+            // 每轮：mute 8s → 恢复，用户只需报「哪轮中间安静了」。
+            when (System.getenv("ATV_VOLPROBE")) {
+                "A" -> {
+                    Thread.sleep(4000)
+                    println(">>> VOLPROBE A mute(0.0) → ${ctl.setVolumeCommand(0.0)} status=${ctl.lastStatus}（8s 应静音）")
+                    Thread.sleep(8000)
+                    println(">>> VOLPROBE A restore(1.0) → ${ctl.setVolumeCommand(1.0)} status=${ctl.lastStatus}")
+                    Thread.sleep(4000)
+                }
+                "C" -> {
+                    Thread.sleep(4000)
+                    println(">>> VOLPROBE C mute(-144dB) → ${ctl.setVolumeRtsp(-144.0)} status=${ctl.lastStatus}（8s 应静音）")
+                    Thread.sleep(8000)
+                    println(">>> VOLPROBE C restore(-10dB) → ${ctl.setVolumeRtsp(-10.0)} status=${ctl.lastStatus}")
+                    Thread.sleep(4000)
+                }
+            }
         }
     }
 }

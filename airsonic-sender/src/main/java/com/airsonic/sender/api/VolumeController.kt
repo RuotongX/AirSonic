@@ -6,6 +6,7 @@ package com.airsonic.sender.api
 
 import com.airsonic.sender.dlna.RenderingControlController
 import com.airsonic.sender.streaming.AirplayStreamSession
+import com.airsonic.sender.streaming.AirplayVideoController
 
 /** 投送音量后端统一抽象。pct 一律 0..100。 */
 interface VolumeController {
@@ -41,6 +42,21 @@ class UpnpVolumeController(private val ctl: RenderingControlController) : Volume
     override fun setVolume(pct: Int): Boolean = ctl.setVolume(pct)
     override fun getVolume(): Int? = ctl.getVolume()
     override fun setMute(muted: Boolean): Boolean = ctl.setMute(muted)
+}
+
+/**
+ * AirPlay 视频（play-queue /command 流程）：经 setProperty volume 下发 0.0~1.0。
+ * 老 /play 回退流程不支持（setVolumeCommand 直接 false）→ UI 亮「用遥控器」提示。
+ */
+class AirplayVideoVolumeController(private val ctl: AirplayVideoController) : VolumeController {
+    @Volatile private var lastPct: Int = 100
+    override fun setVolume(pct: Int): Boolean {
+        if (pct > 0) lastPct = pct.coerceAtMost(100)
+        return ctl.setVolumeCommand(pct.coerceIn(0, 100) / 100.0)
+    }
+    override fun getVolume(): Int? = null
+    override fun setMute(muted: Boolean): Boolean =
+        ctl.setVolumeCommand(if (muted) 0.0 else lastPct / 100.0)
 }
 
 /** 降级：无 RenderingControl 时，推流循环读 [gain] 给 PCM 乘增益。 */
