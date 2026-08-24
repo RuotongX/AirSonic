@@ -683,7 +683,9 @@ object CastEngine {
      */
     fun startScreenMirrorCast(context: Context, resultCode: Int, data: Intent) {
         val device = selected.value ?: run { statusLine.value = L10n.s.noDevice; phase.value = CastPhase.ERROR; return }
-        if (device.type != DeviceType.DLNA || device.controlUrl == null) {
+        // 镜像两条路：DLNA 渲染器（SetAVTransportURI 直播 TS）/ AirPlay 视频设备（play-queue 播同一个 TS 流）
+        val airplayVideo = device.type == DeviceType.APPLE_TV || device.type == DeviceType.MAC
+        if (!airplayVideo && (device.type != DeviceType.DLNA || device.controlUrl == null)) {
             statusLine.value = L10n.s.mirrorNeedsDlna; phase.value = CastPhase.ERROR; return
         }
         val app = context.applicationContext
@@ -699,6 +701,7 @@ object CastEngine {
             var projection: android.media.projection.MediaProjection? = null
             var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
             var ctl: DlnaController? = null
+            var avc: com.airsonic.sender.streaming.AirplayVideoController? = null
             var endMsg: String? = null   // 电视端断开时的收尾文案（优先级高于「已停止」）
             var audioCap: SystemAudioCapture? = null
             var audioEnc: com.airsonic.sender.streaming.AacStreamEncoder? = null
@@ -769,6 +772,40 @@ object CastEngine {
                 val localIp = localIpForTarget(device.host)
                     ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
                 val url = "http://$localIp:$port${srv.path}"
+                val fmtLabel = "H.264${if (audioOn) "+AAC" else ""}/TS"
+                if (airplayVideo) {
+                    // AirPlay 镜像：同一个 TS 直播流经 play-queue 推给 Apple TV/Mac（AVPlayer 实测吃无限长 TS）
+                    val hs = withContext(Dispatchers.IO) { pairFor(app, device) }
+                        ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@launch }
+                    val vc = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
+                    avc = vc
+                    if (!withContext(Dispatchers.IO) { vc.connect() }) { fail(L10n.s.setupFail, gen); return@launch }
+                    videoCtl = vc
+                    bindVolume(AirplayVideoVolumeController(vc), defaultPct = 100)
+                    vc.onConnectionLost = {
+                        if (casting && gen == sessionGen) { endMsg = L10n.s.tvDisconnected; sessionJob?.cancel() }
+                    }
+                    vc.onEvent = { _, body ->
+                        runCatching {
+                            val outer = com.airsonic.sender.streaming.BPlist.decode(body) as? Map<*, *> ?: return@runCatching
+                            val data = (outer["params"] as? Map<*, *>)?.get("data") as? ByteArray ?: return@runCatching
+                            val inner = com.airsonic.sender.streaming.BPlist.decode(data) as? Map<*, *> ?: return@runCatching
+                            if (inner["type"] == "playbackState" && inner["name"] == "stopped" && casting && gen == sessionGen) {
+                                endMsg = if (inner["reason"] == "ended") L10n.s.playFinished else L10n.s.tvDisconnected
+                                sessionJob?.cancel()
+                            }
+                        }
+                    }
+                    activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay 投…｜流=$localIp:$port"
+                    delay(500)   // 让编码流先产数据，接收端一连即有内容
+                    if (!withContext(Dispatchers.IO) { vc.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
+                    if (!isActive || !casting || gen != sessionGen) return@launch
+                    onCastingStarted(device.name)
+                    while (isActive && casting && gen == sessionGen) {
+                        delay(3000)
+                        activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay｜流x${srv.connections}｜丢${srv.drops}"
+                    }
+                } else {
                 val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true,
                     contentFeatures = com.airsonic.sender.dlna.DLNA_CONTENT_FEATURES_LIVE)   // OP=00 直播：少建缓冲降延迟
                 val dc = DlnaController(device.controlUrl!!); ctl = dc; dlnaCtl = dc   // 入口已判非空
@@ -776,7 +813,6 @@ object CastEngine {
                 device.renderingControlUrl?.let {
                     bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
                 }
-                val fmtLabel = "H.264${if (audioOn) "+AAC" else ""}/TS"
                 activeCodec.value = "$fmtLabel ${w}x${h}｜投…｜流=$localIp:$port"
                 delay(500)   // 让编码流先产数据，渲染器一连即有内容（Sonos 同款时序经验）
                 if (!withContext(Dispatchers.IO) { dc.setUri(url, didl) }) {
@@ -801,6 +837,7 @@ object CastEngine {
                     gonePolls = if (hadSub || stopped) gonePolls + 1 else 0
                     if (gonePolls >= 4) { endMsg = L10n.s.tvDisconnected; break }
                 }
+                }
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t
             } catch (t: Throwable) {
@@ -815,6 +852,8 @@ object CastEngine {
                     // SOAP Stop 是阻塞网络请求 → 切线程，别拖 UI 复位
                     ctl?.let { c2 -> thread(isDaemon = true, name = "airsonic-mirror-stop") { runCatching { c2.stop() } } }
                     if (dlnaCtl === ctl) dlnaCtl = null
+                    avc?.let { v2 -> thread(isDaemon = true, name = "airsonic-mirror-stop-ap") { runCatching { v2.stop() }; runCatching { v2.close() } } }
+                    if (videoCtl === avc) videoCtl = null
                     if (gen == sessionGen) {
                         casting = false
                         castLocksRelease()
