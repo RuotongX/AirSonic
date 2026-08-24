@@ -64,14 +64,25 @@ class AppleTvHarnessTest {
         // 3) 完整视频流程：AirplayVideoController(SETUP+事件通道+RECORD) → play()
         //    tvOS 26 走 play-queue /command 新流程（SETUP#2 streams → streamID → 4 条命令），失败自动回退老 /play。
         val ctl = AirplayVideoController(HOST, hs)
+        // 事件通道推送体打印（探针：观察接收端音量/暂停事件格式）
+        ctl.onEvent = { line, body ->
+            val text = body.joinToString("") { b -> if (b in 32..126) b.toInt().toChar().toString() else "." }
+            println(">>> EVENT [$line] ${body.size}B: ${text.take(300)}")
+            runCatching {
+                val outer = BPlist.decode(body) as? Map<*, *>
+                val data = (outer?.get("params") as? Map<*, *>)?.get("data") as? ByteArray
+                val inner = data?.let { BPlist.decode(it) }
+                println(">>> EVENT-DECODED: $inner")
+            }.onFailure { println(">>> EVENT-DECODE-FAIL: ${it.message}") }
+        }
         val conn = ctl.connect()
         println(">>> connect(SETUP+event+RECORD) = $conn  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
         if (conn) {
             val url = System.getenv("ATV_URL") ?: "http://192.168.100.69:8888/sample.mp4"
             val ok = ctl.play(url, 0.0)
             println(">>> play($url) = $ok  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
-            // 让 TV 有时间拉流播放
-            Thread.sleep(25000)
+            // 让 TV 有时间拉流播放（ATV_HOLD_SECONDS 可拉长，供人工在接收端操作抓事件）
+            Thread.sleep((System.getenv("ATV_HOLD_SECONDS") ?: "25").toLong() * 1000)
             // tvOS 26 play-queue 流程下 /playback-info 恒 500，playbackInfo() 降级返回 null 属正常
             println(">>> playbackInfo=${ctl.playbackInfo()}（新流程下为 null）")
             println(">>> 观察 TV 是否出画面（8s 内）")

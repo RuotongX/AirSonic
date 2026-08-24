@@ -192,6 +192,8 @@ object CastEngine {
     }
     val isVideo = mutableStateOf(false)
     val videoPos = mutableStateOf(0.0)
+    /** 视频播放暂停态（手机按钮与接收端事件通道 playbackState 双向同步）。 */
+    val videoPaused = mutableStateOf(false)
     val videoDur = mutableStateOf(0.0)
 
     // ---- PIN 配对 ----
@@ -431,6 +433,7 @@ object CastEngine {
         sessionJob = engineScope.launch {
             var server: com.airsonic.sender.streaming.LocalMediaHttpServer? = null
             var ctl: com.airsonic.sender.streaming.AirplayVideoController? = null
+            var endMsg: String? = null
             try {
                 val src = ContentResolverRangeSource(app, uri, isVideo = true)
                 if (src.length <= 0) { fail(L10n.s.openFail, gen); return@launch }
@@ -453,6 +456,37 @@ object CastEngine {
                         sessionJob?.cancel()
                     }
                 }
+                // 事件通道推送 → 暂停/播放/进度/结束 全部双向同步（接收端点暂停/退出，手机跟着变）
+                c.onEvent = { _, body ->
+                    runCatching {
+                        val outer = com.airsonic.sender.streaming.BPlist.decode(body) as? Map<*, *> ?: return@runCatching
+                        val data = (outer["params"] as? Map<*, *>)?.get("data") as? ByteArray ?: return@runCatching
+                        val inner = com.airsonic.sender.streaming.BPlist.decode(data) as? Map<*, *> ?: return@runCatching
+                        fun cmtime(m: Any?): Double? = (m as? Map<*, *>)?.let {
+                            val v = (it["value"] as? Number)?.toDouble() ?: return@let null
+                            val ts = (it["timescale"] as? Number)?.toDouble() ?: return@let null
+                            if (ts > 0) v / ts else null
+                        }
+                        // a) 状态快照：params.playbackState/rate + position/duration（新流程 /playback-info 恒 500，进度只能靠这里）
+                        (inner["params"] as? Map<*, *>)?.let { p ->
+                            if (p["playbackState"] == "playing") videoPaused.value = false
+                            (p["rate"] as? Number)?.let { videoPaused.value = it.toDouble() == 0.0 }
+                            cmtime(p["position"])?.let { videoPos.value = it }
+                            cmtime(p["duration"])?.let { videoDur.value = it }
+                        }
+                        // b) 状态迁移：type=playbackState, name=paused/playing/stopped(reason=ended)
+                        if (inner["type"] == "playbackState") {
+                            when (inner["name"]) {
+                                "playing" -> videoPaused.value = false
+                                "paused" -> videoPaused.value = true
+                                "stopped" -> if (casting && gen == sessionGen) {
+                                    endMsg = if (inner["reason"] == "ended") L10n.s.playFinished else L10n.s.tvDisconnected
+                                    sessionJob?.cancel()
+                                }
+                            }
+                        }
+                    }
+                }
                 onCastingStarted(device.name)
                 while (isActive && casting && gen == sessionGen) {
                     delay(1000)
@@ -464,7 +498,7 @@ object CastEngine {
             } catch (t: Throwable) {
                 fail("${L10n.s.castError}${t.message}", gen)
             } finally {
-                withContext(NonCancellable) { videoCleanup(gen, server, ctl) }
+                withContext(NonCancellable) { videoCleanup(gen, server, ctl, endMsg) }
             }
         }
     }
@@ -890,7 +924,7 @@ object CastEngine {
         unbindVolume()
         if (dlnaCtl === ownCtl) dlnaCtl = null
         if (httpServer === ownServer) httpServer = null
-        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
+        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0; videoPaused.value = false
         startedAt.value = 0L; level.value = 0f; spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
         if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = endMsg ?: L10n.s.stopped }
     }
@@ -900,8 +934,8 @@ object CastEngine {
 
     // DLNA 控制是阻塞 SOAP（且 seek 后还要 sleep），调用方是 Compose 主线程 → 必须切后台线程避免 ANR。
     // 注意：AirPlay 的 videoCtl 走加密 socket，主线程直调会 NetworkOnMainThreadException 被吞掉→按钮静默失灵，必须切后台。
-    fun videoPause() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.pause() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(0) } } }
-    fun videoResume() { dlnaCtl?.let { c -> thread(isDaemon = true) { c.play() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(1) } } }
+    fun videoPause() { videoPaused.value = true; dlnaCtl?.let { c -> thread(isDaemon = true) { c.pause() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(0) } } }
+    fun videoResume() { videoPaused.value = false; dlnaCtl?.let { c -> thread(isDaemon = true) { c.play() }; return }; videoCtl?.let { c -> thread(isDaemon = true) { c.rate(1) } } }
     fun videoSeek(sec: Double) {
         dlnaCtl?.let { c -> thread(isDaemon = true) { c.seek(sec); Thread.sleep(1000); c.play() }; return }
         videoCtl?.let { c -> thread(isDaemon = true) { c.scrub(sec) } }
@@ -1024,6 +1058,7 @@ object CastEngine {
         gen: Int,
         ownServer: com.airsonic.sender.streaming.LocalMediaHttpServer? = null,
         ownCtl: com.airsonic.sender.streaming.AirplayVideoController? = null,
+        endMsg: String? = null,
     ) {
         // 先无条件关掉本 worker 自己建的 server/ctl（即使已被新会话接管，也要关自己的，否则 socket/连接泄漏）
         // RTSP stop 是阻塞网络请求 → 切后台，别挡 UI 复位；close 跟在 stop 后同线程做
@@ -1037,9 +1072,9 @@ object CastEngine {
         unbindVolume()
         if (videoCtl === ownCtl) videoCtl = null
         if (httpServer === ownServer) httpServer = null
-        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0
+        isVideo.value = false; videoPos.value = 0.0; videoDur.value = 0.0; videoPaused.value = false
         startedAt.value = 0L; level.value = 0f; spectrum.value = FloatArray(SPECTRUM_BANDS); castingDeviceName.value = ""
-        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = L10n.s.stopped }
+        if (phase.value != CastPhase.ERROR) { phase.value = CastPhase.IDLE; statusLine.value = endMsg ?: L10n.s.stopped }
     }
 
     /** 投送时压低手机媒体音量（仅 AirPlay 出声）；停止恢复。 */

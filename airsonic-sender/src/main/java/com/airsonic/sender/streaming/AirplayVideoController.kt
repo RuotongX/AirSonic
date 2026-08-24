@@ -58,6 +58,8 @@ class AirplayVideoController(
 
     /** 接收端主动断开/网络死（feedback 保活连续失败）时回调一次。 */
     var onConnectionLost: (() -> Unit)? = null
+    /** 事件通道推送体（bplist 状态事件）：(请求行, body)。 */
+    var onEvent: ((String, ByteArray) -> Unit)? = null
     /** send() 全加锁：保活线程与 UI 命令共用一条加密 socket，请求-响应必须成对不被穿插。 */
     private val sendLock = Any()
     @Volatile private var keepaliveStop = false
@@ -148,6 +150,7 @@ class AirplayVideoController(
         // 3) 事件通道（设备会在此推 POST /command，不建则扣留后续响应）
         if (eventPort > 0) {
             val evt = AirplayEventChannel(host, eventPort, key) { Log.i(TAG, "evt: $it") }
+            evt.onEventBody = { firstLine, body -> runCatching { onEvent?.invoke(firstLine, body) } }
             if (evt.start()) eventChannel = evt
         }
 

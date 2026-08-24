@@ -511,7 +511,7 @@ private fun RenameDeviceDialog(ctx: Context, device: AirDevice, onDismiss: () ->
 private fun VideoControlBar(deviceName: String) {
     val pos = CastEngine.videoPos.value.toFloat()
     val dur = CastEngine.videoDur.value.toFloat()
-    var paused by remember { mutableStateOf(false) }
+    val paused = CastEngine.videoPaused.value
     var dragPos by remember { mutableStateOf<Float?>(null) }
     Column(
         Modifier.fillMaxWidth().glass(radius = 24, strong = true).padding(16.dp),
@@ -532,7 +532,7 @@ private fun VideoControlBar(deviceName: String) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.weight(1f)) {
                 GlassButton(if (paused) L10n.s.resume else L10n.s.pause) {
-                    if (paused) CastEngine.videoResume() else CastEngine.videoPause(); paused = !paused
+                    if (paused) CastEngine.videoResume() else CastEngine.videoPause()
                 }
             }
             Box(Modifier.weight(1f)) {
@@ -929,13 +929,13 @@ private fun UpdateRow() {
     Spacer(Modifier.height(12.dp))
 }
 
-/** 「支持的协议」详情页：AirPlay / DLNA 均为自研投送（DLNA 含实时屏幕镜像）。 */
+/** 「支持的协议」详情页：AirPlay / DLNA 均为自研投送（均支持声画；DLNA 含实时屏幕镜像）。 */
 @Composable
 fun ProtocolsScreen(nav: NavHostController) {
     val s = L10n.s
     ScreenScaffold(nav, s.protocolsTitle) {
         Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
-            ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagAudio, Aurora.Cyan)
+            ProtocolLine(s.protoAirplay, s.protoAirplaySub, s.tagVideoAudio, Aurora.Cyan)
             Spacer(Modifier.height(16.dp))
             ProtocolLine(s.protoDlna, s.protoDlnaSub, s.tagVideoAudio, Aurora.Cyan)
         }

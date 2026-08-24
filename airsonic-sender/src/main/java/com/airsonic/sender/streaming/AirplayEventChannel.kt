@@ -33,6 +33,8 @@ class AirplayEventChannel(
     sessionKey: ByteArray,
     private val onLog: (String) -> Unit = {}
 ) {
+    /** 设备推送的请求体（bplist 状态事件等）：(请求行, body)。 */
+    var onEventBody: ((String, ByteArray) -> Unit)? = null
     // 注意方向：发送端 send 用 Read key，recv 用 Write key（与控制通道相反）。
     private val writeKey = CryptoPrimitives.hkdfSha512(
         ikm = sessionKey,
@@ -107,6 +109,8 @@ class AirplayEventChannel(
                         .find(headerText)?.groupValues?.get(1)
                     val firstLine = headerText.split("\r\n").firstOrNull() ?: ""
                     onLog("事件通道收到: ${firstLine.take(40)}${if (cseq != null) " CSeq=$cseq" else ""} → 回 200")
+                    val body = if (cl > 0) raw.copyOfRange(sep + 4, total) else ByteArray(0)
+                    if (body.isNotEmpty()) runCatching { onEventBody?.invoke(firstLine, body) }
                     sendResponse(cseq)
                     raw = raw.copyOfRange(total, raw.size)
                 }
