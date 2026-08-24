@@ -78,7 +78,18 @@ class AppleTvHarnessTest {
             // 音量探针：ATV_VOLPROBE=A 只试 play-queue setProperty；=C 只试 RTSP SET_PARAMETER。
             // 每轮：mute 8s → 恢复，用户只需报「哪轮中间安静了」。
             // =SCALE：刻度辨识（A 整数 50→1、C -30dB→0dB 各 5s），配合接收端 volume 日志判读。
+            // =AUTOPLAY：播完等 6s → 补发 setRate → 再等 6s；然后音量变体 D/E 各 3s。
+            // 全程配合接收端日志（rate/volume/playbackState）判读，不靠人耳。
             when (System.getenv("ATV_VOLPROBE")) {
+                "AUTOPLAY" -> {
+                    Thread.sleep(6000)
+                    println(">>> AUTOPLAY 补发 setRate(1.0) → ${ctl.rateAgain()} status=${ctl.lastStatus}")
+                    Thread.sleep(6000)
+                    println(">>> VOLUME D: SET_PARAMETER -15dB +StreamID → ${ctl.setVolumeRtspOnStream(-15.0)} status=${ctl.lastStatus}")
+                    Thread.sleep(3000)
+                    println(">>> VOLUME E: setProperty volume=0.3 +item → ${ctl.setVolumeCommandOnItem(0.3)} status=${ctl.lastStatus}")
+                    Thread.sleep(3000)
+                }
                 "SCALE" -> {
                     Thread.sleep(4000)
                     println(">>> SCALE A volume=50.0 → ${ctl.setVolumeCommand(50.0)} status=${ctl.lastStatus}（5s）")

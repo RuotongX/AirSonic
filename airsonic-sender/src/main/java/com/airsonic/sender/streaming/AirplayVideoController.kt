@@ -48,6 +48,8 @@ class AirplayVideoController(
     private var playQueueStreamId: Int? = null
     /** 当前会话是否走 tvOS 26 play-queue 流程（play() 成功后确定）。 */
     private var usePlayQueue = false
+    /** 最近一次 insertPlayQueueItem 的 item uuid（探针：item 作用域 setProperty 用）。 */
+    private var lastPlayItemUuid: String? = null
 
     var lastStatus: Int = -1
         private set
@@ -187,6 +189,7 @@ class AirplayVideoController(
         playQueueStreamId = sid
         Log.i(TAG, "SETUP#2(streams) ✓ streamID=$sid")
         val itemUuid = UUID.randomUUID().toString().uppercase()
+        lastPlayItemUuid = itemUuid
         val commands = listOf<Map<String, Any?>>(
             linkedMapOf("type" to "insertPlayQueueItem", "item" to linkedMapOf(
                 "uuid" to itemUuid,
@@ -204,6 +207,12 @@ class AirplayVideoController(
             val r = sendCommand(cmd) ?: return false
             if (r.status !in 200..299) { Log.w(TAG, "/command ${cmd["type"]} -> ${r.status}"); return false }
         }
+        // macOS 接收端实测：首条 setRate 常因片源未加载完被重置回暂停（rate 1→0），
+        // 延迟补发才稳定进入 Playing。补发失败不视为错误（Apple TV 首条即生效）。
+        Thread.sleep(1500)
+        rateAgain()
+        Thread.sleep(2000)
+        rateAgain()
         return true
     }
 
@@ -296,6 +305,39 @@ class AirplayVideoController(
     /** 音量实验 C：RTSP SET_PARAMETER volume（RAOP 风格 dB，-30..0，-144 静音）。 */
     fun setVolumeRtsp(db: Double): Boolean =
         (rtsp("SET_PARAMETER", "volume: $db\r\n".toByteArray(Charsets.US_ASCII), "text/parameters")?.status ?: -1) in 200..299
+
+    /** 音量实验 D：SET_PARAMETER volume 带 X-Apple-StreamID（流作用域，探针用）。 */
+    fun setVolumeRtspOnStream(db: Double): Boolean {
+        val sid = playQueueStreamId ?: return false
+        return (send(
+            method = "SET_PARAMETER", uri = "rtsp://$localIp/$rtspSessionId", proto = "RTSP/1.0",
+            body = "volume: $db\r\n".toByteArray(Charsets.US_ASCII), contentType = "text/parameters",
+            headers = linkedMapOf(
+                "CSeq" to "${cseq++}",
+                "User-Agent" to COMMAND_USER_AGENT,
+                "DACP-ID" to dacpId,
+                "Active-Remote" to "1",
+                "Client-Instance" to dacpId,
+                "X-Apple-StreamID" to "$sid",
+            ),
+        )?.status ?: -1) in 200..299
+    }
+
+    /** 音量实验 E：setProperty volume 带 item uuid（探针用；v0.6.1 无 item 被接收端忽略）。 */
+    fun setVolumeCommandOnItem(vol: Double): Boolean {
+        val uuid = lastPlayItemUuid ?: return false
+        if (playQueueStreamId == null) return false
+        val r = sendCommand(linkedMapOf(
+            "type" to "setProperty", "value" to vol, "property" to "volume",
+            "item" to linkedMapOf("uuid" to uuid)))
+        return (r?.status ?: -1) in 200..299
+    }
+
+    /** 补发 setRate(1.0)（探针：接收端加载完才认 rate，首条可能发早了）。 */
+    fun rateAgain(): Boolean {
+        val r = sendCommand(linkedMapOf("type" to "setRate", "rate" to 1.0))
+        return (r?.status ?: -1) in 200..299
+    }
 
     fun close() {
         keepaliveStop = true
