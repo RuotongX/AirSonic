@@ -130,14 +130,25 @@ object Updater {
             val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
             val pct = if (total > 0) (done * 100 / total).toInt() else -1
             return when (st) {
-                DownloadManager.STATUS_SUCCESSFUL ->
-                    Triple("success", 100, apkFile(ctx).takeIf { it.exists() && it.length() > 0 })
+                DownloadManager.STATUS_SUCCESSFUL -> {
+                    val apk = apkFile(ctx).takeIf { it.exists() && it.length() > 0 }
+                    // 已下载的包不比当前版本新（崩溃残留/降级环路）→ 丢弃，当无记录
+                    if (apk != null && !isApkNewer(ctx, apk)) {
+                        apk.delete(); prefs(ctx).edit().remove(KEY_DL_ID).apply(); null
+                    } else Triple("success", 100, apk)
+                }
                 DownloadManager.STATUS_FAILED -> Triple("failed", pct, null)
                 else -> Triple("running", pct, null)
             }
         }
         return null
     }
+
+    /** 下载的 APK 版本是否比当前安装的新（读包内 versionName，读不到按不新处理）。 */
+    private fun isApkNewer(ctx: Context, apk: File): Boolean = runCatching {
+        val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        info != null && isNewer(info.versionName ?: "0", BuildConfig.VERSION_NAME)
+    }.getOrDefault(false)
 
     /** 安装已下载的 APK 并清掉下载记录。 */
     fun installDownloadedApk(ctx: Context, apk: File) {
