@@ -91,54 +91,97 @@ class PairingHandshake(
         /** 一次性 PIN 配对（Apple TV statusFlags 含 OneTimePairingRequired）：用真实 PIN 走
          *  M1–M4 建立会话即止，不交换长期身份(M5/M6)、不持久化。下次需重新输 PIN。 */
         oneTime: Boolean = false
+    ): Boolean = try {
+        val modeLabel = if (transient) "transient" else "PIN"
+        onStep(Step.Info("开始 pair-setup（$modeLabel 模式），目标 $host:$port"))
+        // /pair-setup 必须带 X-Apple-HKP 头。实测：HomePod/Sonos/小米 用 "4" M1→M2 正常；
+        // Apple TV 用 "4" 返回 470 Connection Authorization Required，需用 "3"（m1m2 内自动回退）。
+        if (!m1m2(onStep, transient)) false else srpAndFinish(pin, onStep, transient, oneTime)
+    } catch (t: Throwable) {
+        Log.e(TAG, "pairSetup error", t)
+        onStep(Step.Failure("pair-setup 异常: ${t.message}", t))
+        false
+    }
+
+    // ---- 拆分式 PIN pair-setup（tvOS 下线 /pair-pin-start 后的路径）----
+    // PIN 只在 M3 的 SRP 计算才需要：先发 M1/M2 触发接收端显示 PIN，拿到 PIN 再续 M3-M6。
+    private var pendingSalt: ByteArray? = null
+    private var pendingServerPub: ByteArray? = null
+    private var pendingHeaders: Map<String, String> = emptyMap()
+
+    /** M1 → M2（X-Apple-HKP "4" 优先、470 回退 "3"），成功暂存 salt/B/headers。 */
+    private fun m1m2(onStep: (Step) -> Unit, transient: Boolean): Boolean {
+        var pairHeaders = mapOf("X-Apple-HKP" to "4")
+        // transient 模式（无屏设备 / 不弹 PIN）：state=1, method=0, flags=0x00000010（4B 大端）。
+        // 非 transient（经典 PIN 首配）：state=1, method=0。
+        val m1 = if (transient) {
+            Tlv8.encode(
+                listOf(
+                    Tlv8.Type.STATE to byteArrayOf(0x01),
+                    Tlv8.Type.METHOD to byteArrayOf(0x00),
+                    Tlv8.Type.FLAGS to byteArrayOf(0x00, 0x00, 0x00, 0x10)
+                )
+            )
+        } else {
+            Tlv8.encode(
+                listOf(
+                    Tlv8.Type.STATE to byteArrayOf(0x01),
+                    Tlv8.Type.METHOD to byteArrayOf(0x00)
+                )
+            )
+        }
+        onStep(Step.Info("发送 M1 (state=1, method=0${if (transient) ", flags=transient" else ""})"))
+        var resp1 = http.post("/pair-setup", m1, extraHeaders = pairHeaders)
+        if (resp1.statusCode == 470) {
+            onStep(Step.Info("M1 返回 470，改用 X-Apple-HKP: 3 重试（Apple TV 等）"))
+            pairHeaders = mapOf("X-Apple-HKP" to "3")
+            resp1 = http.post("/pair-setup", m1, extraHeaders = pairHeaders)
+        }
+        if (resp1.statusCode !in 200..299) {
+            onStep(Step.Failure("pair-setup M2 状态异常: ${resp1.statusCode}"))
+            return false
+        }
+        val tlv2 = Tlv8.decode(resp1.body)
+        val salt = tlv2[Tlv8.Type.SALT]
+        val serverPub = tlv2[Tlv8.Type.PUBLIC_KEY]
+        if (salt == null || serverPub == null) {
+            onStep(Step.Failure("M2 缺少 salt/serverPub，keys=${tlv2.keys}"))
+            return false
+        }
+        onStep(Step.Info("收到 M2: salt=${salt.size}B, B=${serverPub.size}B"))
+        pendingSalt = salt; pendingServerPub = serverPub; pendingHeaders = pairHeaders
+        return true
+    }
+
+    /** M1 → M2：让接收端进入配对态并（期望）显示 PIN。成功后可 pairSetupWithPin。 */
+    fun pairSetupBegin(onStep: (Step) -> Unit): Boolean = try {
+        onStep(Step.Info("开始 pair-setup（M1 触发显示 PIN），目标 $host:$port"))
+        m1m2(onStep, transient = false)
+    } catch (t: Throwable) {
+        onStep(Step.Failure("pair-setup M1/M2 异常: ${t.message}", t))
+        false
+    }
+
+    /** 拿到 PIN 后续跑 pair-setup（SRP + M3-M6）。需先 pairSetupBegin 成功。 */
+    fun pairSetupWithPin(pin: String, onStep: (Step) -> Unit): Boolean = try {
+        if (pendingSalt == null) {
+            onStep(Step.Failure("pairSetupWithPin 前未 pairSetupBegin")); false
+        } else srpAndFinish(pin, onStep, transient = false, oneTime = false)
+    } catch (t: Throwable) {
+        onStep(Step.Failure("pair-setup 异常: ${t.message}", t))
+        false
+    }
+
+    /** SRP-6a + M3/M4（+非 transient 时的 M5/M6 身份交换）。输入来自 [m1m2] 的暂存。 */
+    private fun srpAndFinish(
+        pin: String,
+        onStep: (Step) -> Unit,
+        transient: Boolean,
+        oneTime: Boolean,
     ): Boolean {
-        return try {
-            val modeLabel = if (transient) "transient" else "PIN"
-            onStep(Step.Info("开始 pair-setup（$modeLabel 模式），目标 $host:$port"))
-
-            // /pair-setup 必须带 X-Apple-HKP 头。实测：HomePod/Sonos/小米 用 "4" M1→M2 正常；
-            // Apple TV 用 "4" 返回 470 Connection Authorization Required，需用 "3"。
-            // 策略：先试 "4"，若 M1 返回 470 自动回退 "3" 重发（设备无关，自动兼容）。
-            var pairHeaders = mapOf("X-Apple-HKP" to "4")
-
-            // ---- M1 → M2 ----
-            // transient 模式（无屏设备 / 不弹 PIN）：state=1, method=0, flags=0x00000010（4B 大端）。
-            // 非 transient（经典 PIN 首配）：state=1, method=0。
-            val m1 = if (transient) {
-                Tlv8.encode(
-                    listOf(
-                        Tlv8.Type.STATE to byteArrayOf(0x01),
-                        Tlv8.Type.METHOD to byteArrayOf(0x00),
-                        Tlv8.Type.FLAGS to byteArrayOf(0x00, 0x00, 0x00, 0x10)
-                    )
-                )
-            } else {
-                Tlv8.encode(
-                    listOf(
-                        Tlv8.Type.STATE to byteArrayOf(0x01),
-                        Tlv8.Type.METHOD to byteArrayOf(0x00)
-                    )
-                )
-            }
-            onStep(Step.Info("发送 M1 (state=1, method=0${if (transient) ", flags=transient" else ""})"))
-            var resp1 = http.post("/pair-setup", m1, extraHeaders = pairHeaders)
-            if (resp1.statusCode == 470) {
-                onStep(Step.Info("M1 返回 470，改用 X-Apple-HKP: 3 重试（Apple TV 等）"))
-                pairHeaders = mapOf("X-Apple-HKP" to "3")
-                resp1 = http.post("/pair-setup", m1, extraHeaders = pairHeaders)
-            }
-            if (resp1.statusCode !in 200..299) {
-                onStep(Step.Failure("pair-setup M2 状态异常: ${resp1.statusCode}"))
-                return false
-            }
-            val tlv2 = Tlv8.decode(resp1.body)
-            val salt = tlv2[Tlv8.Type.SALT]
-            val serverPub = tlv2[Tlv8.Type.PUBLIC_KEY]
-            if (salt == null || serverPub == null) {
-                onStep(Step.Failure("M2 缺少 salt/serverPub，keys=${tlv2.keys}"))
-                return false
-            }
-            onStep(Step.Info("收到 M2: salt=${salt.size}B, B=${serverPub.size}B"))
+        val pairHeaders = pendingHeaders
+        val salt = pendingSalt ?: return false
+        val serverPub = pendingServerPub ?: return false
 
             // ---- SRP-6a 客户端计算 ----
             val srp = CryptoPrimitives.Srp6Client(
@@ -259,12 +302,7 @@ class PairingHandshake(
             }
             lastAccessoryLtpk = accLtpk   // 已验签的接收端长期公钥，交调用方持久化
             onStep(Step.Success("pair-setup 完成 ✓ 接收端身份已验证 (id=${String(accId)})"))
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "pairSetup error", t)
-            onStep(Step.Failure("pair-setup 异常: ${t.message}", t))
-            false
-        }
+            return true
     }
 
     /**

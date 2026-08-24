@@ -1201,8 +1201,16 @@ object CastEngine {
     /** PIN pair-setup（完整 M1-M6 交换 Ed25519 身份并持久化），不在此连接建会话。 */
     private fun doPinSetup(app: Context, device: AirDevice): Boolean {
         val hs = newHs(app, device)
+        var useSplit = false
         if (!hs.pairPinStart()) {
-            fail("${L10n.s.pairFail} pinStart:${hs.lastPinStartStatus}"); pinAborted = true; return false
+            // tvOS 新版本下线 /pair-pin-start(501)：改发 M1/M2 让 TV 进入配对态（期望触发屏幕显示）
+            val code = hs.lastPinStartStatus
+            android.util.Log.w("CastEngine", "pair-pin-start:$code，改走 M1 触发显示")
+            var step = ""
+            if (!hs.pairSetupBegin { s -> if (s is PairingHandshake.Step.Failure) step = s.message }) {
+                fail("${L10n.s.pairFail} pinStart:$code m1:$step"); pinAborted = true; return false
+            }
+            useSplit = true
         }
         pinQueue.clear()
         pinNonce.value++
@@ -1210,9 +1218,12 @@ object CastEngine {
         val pin = try { pinQueue.poll(120, java.util.concurrent.TimeUnit.SECONDS) } finally { pinRequest.value = null }
         if (pin == null || pin == PIN_CANCEL) { pinAborted = true; return false }
         var step = ""
-        if (!hs.pairSetup(pin, onStep = { s -> if (s is PairingHandshake.Step.Failure) step = s.message }, transient = false)) {
-            fail("${L10n.s.pairFail} setup:$step"); pinAborted = true; return false
+        val ok = if (useSplit) {
+            hs.pairSetupWithPin(pin) { s -> if (s is PairingHandshake.Step.Failure) step = s.message }
+        } else {
+            hs.pairSetup(pin, onStep = { s -> if (s is PairingHandshake.Step.Failure) step = s.message }, transient = false)
         }
+        if (!ok) { fail("${L10n.s.pairFail} setup:$step"); pinAborted = true; return false }
         PairingStore.markPaired(app, device.host)
         hs.lastAccessoryLtpk?.let { PairingStore.saveAccessoryLtpk(app, device.host, it) }   // M6 已验签的 LTPK 落库
         return true
