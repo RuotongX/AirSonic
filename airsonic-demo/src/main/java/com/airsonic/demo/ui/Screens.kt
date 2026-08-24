@@ -646,7 +646,7 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             Box(
                 Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) { Text(s.dlnaDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+            ) { Text(CastEngine.selected.value?.let { CastEngine.typeLabel(it) } ?: s.castDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
             Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(20.dp))

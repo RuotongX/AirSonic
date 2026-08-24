@@ -88,6 +88,7 @@ data class Strings(
     val installNow: String,        // 已下载，点击安装 / Downloaded, tap to install
     val openInBrowser: String,     // 在浏览器打开 / Open in browser
     val dlnaDevice: String,         // DLNA 设备 / DLNA device
+    val castDevice: String,         // 投屏设备（未识别时的通用名）/ Cast device
     val protocolsTitle: String,     // 支持的协议 / Supported protocols
     val protocolsSub: String,       // AirPlay · DLNA · 屏幕镜像
     val tagSystem: String,          // 系统 / System
@@ -160,7 +161,7 @@ private val ZH = Strings(
     newVersion = "发现新版本", download = "下载并安装", downloading = "下载中", updateFailed = "检查失败",
     installNow = "已下载完成，点击安装",
     openInBrowser = "在浏览器打开",
-    dlnaDevice = "DLNA 设备",
+    dlnaDevice = "DLNA 设备", castDevice = "投屏设备",
     protocolsTitle = "支持的协议", protocolsSub = "AirPlay · DLNA · 屏幕镜像", tagSystem = "系统",
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · 音箱 · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "智能电视 · 盒子 · Kodi",
@@ -234,7 +235,7 @@ private val EN = Strings(
     newVersion = "New version", download = "Download & install", downloading = "Downloading", updateFailed = "Check failed",
     installNow = "Downloaded — tap to install",
     openInBrowser = "Open in browser",
-    dlnaDevice = "DLNA device",
+    dlnaDevice = "DLNA device", castDevice = "Cast device",
     protocolsTitle = "Supported protocols", protocolsSub = "AirPlay · DLNA · Screen mirroring", tagSystem = "System",
     protoAirplay = "AirPlay / AirPlay 2", protoAirplaySub = "HomePod · Speakers · Apple TV · Mac",
     protoDlna = "DLNA / UPnP", protoDlnaSub = "Smart TV · Box · Kodi",

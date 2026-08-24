@@ -716,7 +716,7 @@ object CastEngine {
                 // 新观众接入即补关键帧；队列按视频量级给 8192 包（≈1.5MB，音频默认 256 远不够）
                 val srv = com.airsonic.sender.streaming.LiveAudioHttpServer(
                     contentType = "video/mp2t", pathExt = "ts", queueMax = 8192,
-                    onSubscriber = { caster?.requestSyncFrame() })
+                    onSubscriber = { caster?.prepareCleanJoin() })
                 server = srv
                 val port = withContext(Dispatchers.IO) { srv.start() }
                 // 最长边压到 1920（1080p 级），保宽高比、偶数对齐（H.264 yuv420 要求偶数）

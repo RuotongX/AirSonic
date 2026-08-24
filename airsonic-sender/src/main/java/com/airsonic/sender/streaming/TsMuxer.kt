@@ -11,9 +11,10 @@ package com.airsonic.sender.streaming
  * `video/mp2t` 扇出给 DLNA 渲染器（坚果等）做实时屏幕镜像播放。
  *
  * 结构：
- *  - PAT（PMT pid=[pmtPid]）+ PMT（stream_type 0x1B=H.264）周期性重发（每 [patPmtIntervalPackets] 个 TS 包），
+ *  - PAT（PMT pid=[pmtPid]）+ SDT（AVPlayer 硬性要求）+ PMT（stream_type 0x1B=H.264）周期性重发（每 [patPmtIntervalPackets] 个 TS 包），
  *    保证播放器中途接入也能拿到节目表。
- *  - PES：stream_id 0xE0，PTS=DTS（编码器须 Baseline 无 B 帧，无重排），PES_packet_length=0（视频允许无限长）。
+ *  - PES：stream_id 0xE0，视频 PTS+DTS 双时间戳（DTS=PTS，编码器须 Baseline 无 B 帧；AVPlayer 对 TS 视频要求双时间戳），
+ *    PES_packet_length=0（视频允许无限长）；音频仅 PTS、实长。
  *  - PCR：每个 PES 的首个 TS 包 adaptation field 带 PCR（27MHz 体系，ext=0），时钟 = PTS(90kHz)。
  *  - SPS/PPS：调用方通过 [setSpsPps] 灌入；每个关键帧前自动前置，保证中途接入可解码。
  *  - 尾部不足 184B 的 TS 包用 adaptation field stuffing（0xFF）补齐。
@@ -38,6 +39,10 @@ class TsMuxer(
         this.sps = sps; this.pps = pps
     }
 
+    /** 下一个视频帧前强制重发 PAT/SDT/PMT（新观众接入：严格播放器需要流起点就有节目表）。 */
+    @Synchronized
+    fun forcePatPmt() { packetsSincePatPmt = Int.MAX_VALUE }
+
     /** 喂一个 H.264 access unit（Annex-B，不含 SPS/PPS；关键帧自动前置 SPS/PPS）。ptsUs 为微秒呈现时间。 */
     @Synchronized
     fun writeVideoFrame(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
@@ -61,6 +66,7 @@ class TsMuxer(
     private fun maybePatPmt() {
         if (packetsSincePatPmt < patPmtIntervalPackets) return
         emitPsi(tableId = 0x00, body = buildPatBody(), pid = 0x0000)
+        emitPsi(tableId = 0x42, body = buildSdtBody(), pid = 0x0011)   // SDT：AVPlayer 需要（ffmpeg 惯例）
         emitPsi(tableId = 0x02, body = buildPmtBody(), pid = pmtPid)
         packetsSincePatPmt = 0
     }
@@ -74,6 +80,28 @@ class TsMuxer(
         // section_number=0, last_section_number=0 默认 0
         put16(b, 5, 1)                                  // program_number 1
         put16(b, 7, 0xE000 or pmtPid)                   // reserved111 + PMT PID
+        return b
+    }
+
+    /** SDT（actual TS）：1 个 service（running，无名 provider + 服务名 "AirSonic"）。 */
+    private fun buildSdtBody(): ByteArray {
+        val name = "AirSonic".toByteArray(Charsets.US_ASCII)
+        // service_descriptor：tag 0x48, service_type 0x01(数字电视), provider 空, service_name
+        val desc = ByteArray(5 + name.size)
+        desc[0] = 0x48; desc[1] = (3 + name.size).toByte(); desc[2] = 0x01
+        desc[3] = 0x00; desc[4] = name.size.toByte()
+        name.copyInto(desc, 5)
+        // tsid(2) + flags(1) + section(1) + last(1) + onid(2) + reserved(1) + service loop
+        val b = ByteArray(8 + 5 + desc.size)
+        put16(b, 0, 1)                                  // transport_stream_id
+        b[2] = 0xC1.toByte()
+        put16(b, 5, 1)                                  // original_network_id
+        b[7] = 0xFF.toByte()                            // reserved_future_use
+        put16(b, 8, 1)                                  // service_id
+        b[10] = 0xFC.toByte()                           // reserved + EIT_schedule=0 + EIT_present=0
+        b[11] = (0x80 or ((desc.size shr 8) and 0x0F)).toByte()  // running=4 + free_CA=0 + len 高 4 位
+        b[12] = (desc.size and 0xFF).toByte()
+        desc.copyInto(b, 13)
         return b
     }
 
@@ -110,25 +138,37 @@ class TsMuxer(
         body.copyInto(sec, 3)
         val crc = crc32Mpeg(sec, 0, 3 + body.size)
         put32(sec, 3 + body.size, crc.toInt())
-        // PSI 永远一个 TS 包：payload = pointer_field(0x00) + section，尾部 stuffing
+        // PSI 永远一个 TS 包、**纯载荷**（无 adaptation field，尾部 0xFF stuffing 在载荷内）：
+        // 广播界惯例如此（ffmpeg 同款），AVPlayer 的 PSI 解析器不吃 adaptation 形式。
         val payload = ByteArray(1 + sec.size)
         sec.copyInto(payload, 1)
-        sendTs(pid, payloadUnitStart = true, payload = payload, pcr90 = null)
+        require(payload.size <= 184) { "PSI too big: ${payload.size}" }
+        val pkt = ByteArray(188)
+        pkt[0] = 0x47
+        put16(pkt, 1, 0x4000 or pid)                    // PUSI
+        pkt[3] = (0x10 or nextCc(pid)).toByte()         // payload only
+        payload.copyInto(pkt, 4)
+        for (i in 4 + payload.size until 188) pkt[i] = 0xFF.toByte()
+        packetsSincePatPmt++
+        onPacket(pkt)
     }
 
     // ---- PES ----
     private fun writePes(pid: Int, streamId: Int, payload: ByteArray, pts90: Long, withPcr: Boolean) {
-        // PES 头：00 00 01 + stream_id + packet_length + '10'flags + PTS
-        // packet_length：视频=0（无限长直播流惯例）；音频按规范必须给实长（仅视频允许 0）
-        val pes = ByteArray(9 + 5 + payload.size)
+        // PES 头：00 00 01 + stream_id + packet_length + '10'flags + 时间戳
+        // 视频/音频均仅 PTS（Baseline 无 B 帧；ffmpeg 对 annexb 来源的 TS 也只写 PTS）。
+        // packet_length：视频=0（直播惯例）；音频必须实长。
+        val video = streamId == 0xE0
+        val hdrTsLen = 5
+        val pes = ByteArray(9 + hdrTsLen + payload.size)
         pes[2] = 1                                      // start_code_prefix 00 00 01（前两位默认 0）
         pes[3] = streamId.toByte()
-        put16(pes, 4, if (streamId == 0xC0) 8 + payload.size else 0)
+        put16(pes, 4, if (video) 0 else 3 + hdrTsLen + payload.size)
         pes[6] = 0x80.toByte()                          // '10' + 无加扰 + 无优先级
         pes[7] = 0x80.toByte()                          // PTS only
-        pes[8] = 5                                      // header_data_length
-        writePts(pes, 9, pts90, 0x2)                    // '0010' + PTS
-        payload.copyInto(pes, 14)
+        pes[8] = hdrTsLen.toByte()
+        writePts(pes, 9, pts90, 0x2)
+        payload.copyInto(pes, 9 + hdrTsLen)
 
         var off = 0
         var first = true
@@ -161,7 +201,10 @@ class TsMuxer(
                 pkt[off + 1] = 0x10                     // PCR_flag
                 writePcr(pkt, off + 2, pcr90)
                 afl += 7
-            }
+            } else if (stuffing >= 2) {
+                pkt[off + 1] = 0x00                     // flags 字节（无标志）——必须显式写 0，
+                afl += 1                                // 否则 stuffing 的 0xFF 落进 flags 位会被
+            }                                           // 解析器当成 PCR/OPCR 全置位（AVPlayer 报错根因）
             val stuffBytes = 183 - afl - payload.size
             check(stuffBytes >= 0) { "TS overflow: payload=${payload.size} afl=$afl" }
             for (i in 0 until stuffBytes) pkt[aflStart + afl + i] = 0xFF.toByte()
@@ -193,11 +236,13 @@ class TsMuxer(
     /** PTS 的 5 字节编码：prefix(4bit) + PTS(33bit, 分 3 段) + marker bits。 */
     private fun writePts(dst: ByteArray, off: Int, pts: Long, prefix: Int) {
         val v = pts and 0x1FFFFFFFFL
-        dst[off] = (prefix shl 4 or ((v ushr 30).toInt() and 7) shl 1 or 1).toByte()
+        // 注意必须全加括号：Kotlin 中 shl/or 同为中缀函数、优先级相同且左结合，
+        // 不加括号会算成 (((prefix shl 4) or X) shl 1) or 1 → 标记位全错（AVPlayer 拒播根因）
+        dst[off] = ((prefix shl 4) or (((v ushr 30).toInt() and 7) shl 1) or 1).toByte()
         dst[off + 1] = (v ushr 22).toByte()
-        dst[off + 2] = (((v ushr 15).toInt() and 0x7F) shl 1 or 1).toByte()
+        dst[off + 2] = ((((v ushr 15).toInt() and 0x7F) shl 1) or 1).toByte()
         dst[off + 3] = (v ushr 7).toByte()
-        dst[off + 4] = (((v and 0x7F).toInt()) shl 1 or 1).toByte()
+        dst[off + 4] = (((v and 0x7F).toInt() shl 1) or 1).toByte()
     }
 
     private fun usTo90k(us: Long): Long = us * 9 / 100  // 90kHz：1s=90000 ticks；会话时长级 Long 不溢出

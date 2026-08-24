@@ -99,6 +99,8 @@ class TsMuxerTest {
         assertEquals(1, first[pesOff + 2].toInt()); assertEquals(0xE0, first[pesOff + 3].toInt() and 0xFF)
         val pts = readPts33(first, pesOff + 9)
         assertEquals(90_000L, pts)
+        // PTS 首字节必须是 '0010'+高 3 位+marker=1（0x21）；Kotlin shl/or 同优先级左结合曾算出 0x41，AVPlayer 拒播
+        assertEquals(0x21, first[pesOff + 9].toInt() and 0xFF)
     }
 
     @Test

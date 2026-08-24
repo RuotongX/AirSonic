@@ -188,6 +188,17 @@ class ScreenMirrorCaster(
         }
     }
 
+    /**
+     * 新观众接入：丢包直到下个 IDR + 该 IDR 前强制重发 PAT/SDT/PMT。
+     * 严格播放器（AVPlayer）流起点必须是「PAT/SDT/PMT → SPS/PPS → IDR」，否则探流即判 unsupported。
+     * 代价：老观众闪过一个 GOP（≤1s），可接受。
+     */
+    fun prepareCleanJoin() {
+        gating = true
+        muxer.forcePatPmt()
+        requestSyncFrame()
+    }
+
     fun stop() {
         running = false
         drainThread?.join(1500)
