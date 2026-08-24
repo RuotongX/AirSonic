@@ -6,7 +6,6 @@ package com.airsonic.sender.api
 
 import com.airsonic.sender.dlna.RenderingControlController
 import com.airsonic.sender.streaming.AirplayStreamSession
-import com.airsonic.sender.streaming.AirplayVideoController
 
 /** 投送音量后端统一抽象。pct 一律 0..100。 */
 interface VolumeController {
@@ -42,22 +41,6 @@ class UpnpVolumeController(private val ctl: RenderingControlController) : Volume
     override fun setVolume(pct: Int): Boolean = ctl.setVolume(pct)
     override fun getVolume(): Int? = ctl.getVolume()
     override fun setMute(muted: Boolean): Boolean = ctl.setMute(muted)
-}
-
-/**
- * AirPlay 视频音量：RTSP SET_PARAMETER（RAOP dB 制，-30..0，-144 静音）。
- * 接收端日志实证：SET_PARAMETER 驱动 "Setting software volume"（会话软件增益，不动系统音量）；
- * play-queue setProperty volume 虽回 200 但被忽略（接收端零日志），故弃用。
- */
-class AirplayVideoVolumeController(private val ctl: AirplayVideoController) : VolumeController {
-    @Volatile private var lastPct: Int = 100
-    override fun setVolume(pct: Int): Boolean {
-        if (pct > 0) lastPct = pct.coerceAtMost(100)
-        return ctl.setVolumeRtsp(pctToAirplayDb(pct))
-    }
-    override fun getVolume(): Int? = null
-    override fun setMute(muted: Boolean): Boolean =
-        ctl.setVolumeRtsp(if (muted) -144.0 else pctToAirplayDb(lastPct))
 }
 
 /** 降级：无 RenderingControl 时，推流循环读 [gain] 给 PCM 乘增益。 */

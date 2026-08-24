@@ -30,7 +30,6 @@ import com.airsonic.sender.dlna.buildDidl
 import com.airsonic.sender.pairing.PairingHandshake
 import com.airsonic.sender.api.VolumeController
 import com.airsonic.sender.api.AirplayVolumeController
-import com.airsonic.sender.api.AirplayVideoVolumeController
 import com.airsonic.sender.api.UpnpVolumeController
 import com.airsonic.sender.api.GainVolumeController
 import com.airsonic.sender.dlna.RenderingControlController
@@ -448,7 +447,7 @@ object CastEngine {
                 if (!withContext(Dispatchers.IO) { c.connect() }) { fail(L10n.s.setupFail, gen); return@launch }
                 videoCtl = c
                 if (!withContext(Dispatchers.IO) { c.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
-                bindVolume(AirplayVideoVolumeController(c), defaultPct = 100)
+                // AirPlay 视频不绑音量：Apple 接收端（Mac/Apple TV 实测）不吃会话音量，滑块无效反误导
                 // 接收端断线（feedback 保活判定）→ 退出投送态，别留僵尸读秒
                 c.onConnectionLost = {
                     if (casting && gen == sessionGen) {
@@ -781,7 +780,6 @@ object CastEngine {
                     avc = vc
                     if (!withContext(Dispatchers.IO) { vc.connect() }) { fail(L10n.s.setupFail, gen); return@launch }
                     videoCtl = vc
-                    bindVolume(AirplayVideoVolumeController(vc), defaultPct = 100)
                     vc.onConnectionLost = {
                         if (casting && gen == sessionGen) { endMsg = L10n.s.tvDisconnected; sessionJob?.cancel() }
                     }
