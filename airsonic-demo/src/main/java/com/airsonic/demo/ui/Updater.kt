@@ -103,6 +103,7 @@ object Updater {
     /** 经系统 DownloadManager 后台下载 APK，返回下载 id（持久化，供跨进入查询）。 */
     fun enqueueApkDownload(ctx: Context, url: String): Long {
         val out = apkFile(ctx)
+        out.parentFile?.mkdirs()
         if (out.exists()) out.delete()
         val req = DownloadManager.Request(Uri.parse(url))
             .setTitle("AirSonic update")

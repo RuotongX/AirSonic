@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- 更新 APK 下载到 externalCacheDir / cacheDir，供 FileProvider 暴露 -->
+    <!-- 更新 APK 下载目录，供 FileProvider 暴露（DownloadManager 存 external-files/updates） -->
+    <external-files-path name="ext_files_updates" path="updates/" />
     <external-cache-path name="ext_cache" path="." />
     <cache-path name="cache" path="." />
 </paths>
