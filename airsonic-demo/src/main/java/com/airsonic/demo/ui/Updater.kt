@@ -43,6 +43,12 @@ object Updater {
 
     val currentVersion: String get() = BuildConfig.VERSION_NAME
 
+    // ---- 更新 UI 状态（单例：离开设置页再回来不重来） ----
+    val uiStatus = androidx.compose.runtime.mutableStateOf("idle")   // idle/checking/uptodate/available/downloading/failed
+    val uiRelease = androidx.compose.runtime.mutableStateOf<Release?>(null)
+    val uiProgress = androidx.compose.runtime.mutableStateOf(0)
+    val uiDownloadedApk = androidx.compose.runtime.mutableStateOf<File?>(null)
+
     /** 查最新发布；网络/解析失败返回 null。 */
     suspend fun checkLatest(): Release? = withContext(Dispatchers.IO) {
         runCatching {

@@ -539,6 +539,10 @@ private fun VideoControlBar(deviceName: String) {
                 GlassButton(L10n.s.stop) { CastEngine.stop() }
             }
         }
+        if (CastEngine.volumeActive.value) {
+            Spacer(Modifier.height(10.dp))
+            VolumeRow()
+        }
     }
 }
 
@@ -831,11 +835,11 @@ private fun UpdateRow() {
     val s = L10n.s
     val scope = rememberCoroutineScope()
 
-    // 状态机：idle / checking / uptodate / available / downloading / failed
-    var status by remember { mutableStateOf("idle") }
-    var release by remember { mutableStateOf<Updater.Release?>(null) }
-    var progress by remember { mutableStateOf(0) }
-    var downloadedApk by remember { mutableStateOf<java.io.File?>(null) }
+    // 状态机：idle / checking / uptodate / available / downloading / failed（单例持有，离开页面不丢）
+    var status by Updater.uiStatus
+    var release by Updater.uiRelease
+    var progress by Updater.uiProgress
+    var downloadedApk by Updater.uiDownloadedApk
 
     // 进入时接上在途/已完成的系统下载：下完回来直接可装，不重新下载
     LaunchedEffect(Unit) {

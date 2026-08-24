@@ -8,6 +8,7 @@ import android.util.Log
 import com.airsonic.sender.pairing.PairingHandshake
 import java.security.SecureRandom
 import java.util.UUID
+import kotlin.concurrent.thread
 
 /**
  * AirPlay 视频播放控制（对齐 pyatv 真机抓包 + tvOS 26 play-queue 新流程）。
@@ -53,6 +54,13 @@ class AirplayVideoController(
     var lastError: String = ""
         private set
 
+    /** 接收端主动断开/网络死（feedback 保活连续失败）时回调一次。 */
+    var onConnectionLost: (() -> Unit)? = null
+    /** send() 全加锁：保活线程与 UI 命令共用一条加密 socket，请求-响应必须成对不被穿插。 */
+    private val sendLock = Any()
+    @Volatile private var keepaliveStop = false
+    private var keepaliveThread: Thread? = null
+
     data class Resp(val status: Int, val body: ByteArray)
 
     /** 建立加密通道 + 完整视频会话(SETUP→事件通道→RECORD)。就绪后即可 play()。 */
@@ -61,8 +69,39 @@ class AirplayVideoController(
         localIp = runCatching { handshake.httpClient.rawSocket().localAddress.hostAddress }.getOrNull() ?: "0.0.0.0"
         val (input, output) = handshake.httpClient.detachStreams()
         channel = HapEncryptedChannel(input, output, key)
-        setupVideoSession(key)
+        setupVideoSession(key).also { if (it) startKeepalive() }
     }.onFailure { lastError = "connect exc:${it.message}"; Log.e(TAG, "connect failed", it) }.getOrDefault(false)
+
+    /** 2s `POST /feedback` 保活（pyatv airplayv2 同款）：保持会话不被接收端回收；连续 2 次失败判定断线。 */
+    private fun startKeepalive() {
+        keepaliveStop = false
+        keepaliveThread = thread(isDaemon = true, name = "airplay-feedback") {
+            var failures = 0
+            while (!keepaliveStop) {
+                Thread.sleep(2000)
+                if (keepaliveStop) break
+                failures = if (feedback()) 0 else failures + 1
+                if (failures >= 2 && !keepaliveStop) {
+                    Log.w(TAG, "feedback 连续失败，判定接收端已断")
+                    runCatching { onConnectionLost?.invoke() }
+                    break
+                }
+            }
+        }
+    }
+
+    private fun feedback(): Boolean =
+        (send(
+            method = "POST", uri = "/feedback", proto = "RTSP/1.0",
+            body = ByteArray(0), contentType = null,
+            headers = linkedMapOf(
+                "CSeq" to "${cseq++}",
+                "User-Agent" to COMMAND_USER_AGENT,
+                "DACP-ID" to dacpId,
+                "Active-Remote" to "1",
+                "Client-Instance" to dacpId,
+            ),
+        )?.status ?: -1) in 200..299
 
     private fun setupVideoSession(key: ByteArray): Boolean {
         // 1) NTP 计时服务器（SETUP 必须声明可响应的 timingPort）
@@ -259,6 +298,7 @@ class AirplayVideoController(
         (rtsp("SET_PARAMETER", "volume: $db\r\n".toByteArray(Charsets.US_ASCII), "text/parameters")?.status ?: -1) in 200..299
 
     fun close() {
+        keepaliveStop = true
         runCatching { eventChannel?.stop() }; eventChannel = null
         runCatching { timingServer?.stop() }; timingServer = null
         channel = null
@@ -298,22 +338,24 @@ class AirplayVideoController(
 
     private fun send(method: String, uri: String, proto: String, body: ByteArray, contentType: String?, headers: Map<String, String>): Resp? {
         val ch = channel ?: return null
-        return runCatching {
-            val sb = StringBuilder()
-            sb.append("$method $uri $proto\r\n")
-            for ((k, v) in headers) sb.append("$k: $v\r\n")
-            if (body.isNotEmpty()) {
-                sb.append("Content-Length: ${body.size}\r\n")
-                if (contentType != null) sb.append("Content-Type: $contentType\r\n")
-            }
-            sb.append("\r\n")
-            ch.sendEncrypted(sb.toString().toByteArray(Charsets.US_ASCII) + body)
-            val r = parse(ch.recvResponse())
-            lastStatus = r.status
-            lastError = "status=${r.status}"
-            Log.i(TAG, "$method $uri -> ${r.status} (body ${r.body.size}B)")
-            r
-        }.onFailure { lastError = "exc:${it.javaClass.simpleName}:${it.message}"; Log.e(TAG, "video req $uri failed", it) }.getOrNull()
+        return synchronized(sendLock) {
+            runCatching {
+                val sb = StringBuilder()
+                sb.append("$method $uri $proto\r\n")
+                for ((k, v) in headers) sb.append("$k: $v\r\n")
+                if (body.isNotEmpty()) {
+                    sb.append("Content-Length: ${body.size}\r\n")
+                    if (contentType != null) sb.append("Content-Type: $contentType\r\n")
+                }
+                sb.append("\r\n")
+                ch.sendEncrypted(sb.toString().toByteArray(Charsets.US_ASCII) + body)
+                val r = parse(ch.recvResponse())
+                lastStatus = r.status
+                lastError = "status=${r.status}"
+                Log.i(TAG, "$method $uri -> ${r.status} (body ${r.body.size}B)")
+                r
+            }.onFailure { lastError = "exc:${it.javaClass.simpleName}:${it.message}"; Log.e(TAG, "video req $uri failed", it) }.getOrNull()
+        }
     }
 
     private fun parse(raw: ByteArray): Resp {

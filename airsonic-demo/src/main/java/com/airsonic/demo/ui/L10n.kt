@@ -115,7 +115,7 @@ data class Strings(
     val mirrorInAppTitle: String,   // 应用内投屏（DLNA 实时屏幕流）
     val mirrorInAppSub: String,     // 录屏实时投到选中设备…延迟说明
     val mirrorNeedsDlna: String,    // 应用内投屏需选中 DLNA 设备
-    val tvDisconnected: String,     // 电视端已断开/停止，投送结束
+    val tvDisconnected: String,     // 接收端已断开/停止，投送结束
     val volumeUnsupported: String,  // 音量下发失败提示（设备不支持）
     val bgKeepHint: String,         // 后台保活引导（点按跳系统设置）
     val cleanedLastSession: String, // 冷启动清理上次投送残留
@@ -153,7 +153,7 @@ private val ZH = Strings(
     castError = "投送异常：", pairFail = "配对失败", setupFail = "SETUP 失败",
     captureFail = "音频捕获初始化失败", openFail = "无法打开文件", noDevice = "未选择设备",
     discoverFail = "发现失败：", notSupportedSuffix = "暂不支持",
-    videoOnTv = "正在 TV 上播放", pause = "暂停", resume = "继续",
+    videoOnTv = "正在投放", pause = "暂停", resume = "继续",
     pinTitle = "输入配对码", pinHint = "在 TV 屏幕上查看 4 位 PIN", confirm = "确认", cancel = "取消",
     rename = "重命名", hide = "隐藏", unhide = "取消隐藏", hiddenDevices = "隐藏的设备", renameHint = "设备显示名",
     checkUpdate = "检查更新", checkUpdateSub = "当前版本", checking = "正在检查…", upToDate = "已是最新版本",
@@ -189,9 +189,9 @@ private val ZH = Strings(
     mirrorInAppTitle = "应用内投屏",
     mirrorInAppSub = "录屏+系统声音实时投到选中的 DLNA 设备（电视/投影/盒子），延迟约 1~3 秒",
     mirrorNeedsDlna = "应用内投屏需先在首页选中 DLNA 设备",
-    tvDisconnected = "电视端已断开，投送结束",
+    tvDisconnected = "接收端已断开，投送结束",
     volumeUnsupported = "音量控制未送达：该设备可能不支持，请用电视遥控器",
-    bgKeepHint = "切后台断流？点我跳系统设置允许后台运行（vivo 另需开：自启动 + 后台高耗电）",
+    bgKeepHint = "切后台断流？点我跳系统设置，允许本应用自启动与后台运行",
     cleanedLastSession = "检测到上次投送未正常结束，已通知电视停止",
     httpStreamTitle = "HTTP 流输出",
     httpStreamSub = "生成直播地址，VLC/浏览器/任意播放器均可收听",
@@ -227,7 +227,7 @@ private val EN = Strings(
     castError = "Cast error: ", pairFail = "Pairing failed", setupFail = "Setup failed",
     captureFail = "Audio capture failed to start", openFail = "Cannot open file", noDevice = "No device selected",
     discoverFail = "Discovery failed: ", notSupportedSuffix = "not supported",
-    videoOnTv = "Playing on TV", pause = "Pause", resume = "Resume",
+    videoOnTv = "Casting", pause = "Pause", resume = "Resume",
     pinTitle = "Enter pairing code", pinHint = "See the 4-digit PIN on the TV screen", confirm = "OK", cancel = "Cancel",
     rename = "Rename", hide = "Hide", unhide = "Unhide", hiddenDevices = "Hidden", renameHint = "Display name",
     checkUpdate = "Check for updates", checkUpdateSub = "Current", checking = "Checking…", upToDate = "Up to date",
@@ -263,9 +263,9 @@ private val EN = Strings(
     mirrorInAppTitle = "In-app screen cast",
     mirrorInAppSub = "Mirror screen + system sound live to the selected DLNA device (TV/projector/box), ~1–3s delay",
     mirrorNeedsDlna = "In-app casting needs a DLNA device selected on Home",
-    tvDisconnected = "TV disconnected — cast ended",
+    tvDisconnected = "Receiver disconnected — cast ended",
     volumeUnsupported = "Volume command not accepted by this device — use the TV remote",
-    bgKeepHint = "Drops when backgrounded? Tap to allow background run (vivo: also enable auto-start + background high power)",
+    bgKeepHint = "Drops when backgrounded? Tap to allow auto-start & background run in system settings",
     cleanedLastSession = "Previous cast did not end cleanly — stop sent to the TV",
     httpStreamTitle = "HTTP stream out",
     httpStreamSub = "Get a live URL — VLC, browsers or any player can tune in",

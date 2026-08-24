@@ -446,6 +446,13 @@ object CastEngine {
                 videoCtl = c
                 if (!withContext(Dispatchers.IO) { c.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
                 bindVolume(AirplayVideoVolumeController(c), defaultPct = 100)
+                // 接收端断线（feedback 保活判定）→ 退出投送态，别留僵尸读秒
+                c.onConnectionLost = {
+                    if (casting && gen == sessionGen) {
+                        fail(L10n.s.tvDisconnected, gen)
+                        sessionJob?.cancel()
+                    }
+                }
                 onCastingStarted(device.name)
                 while (isActive && casting && gen == sessionGen) {
                     delay(1000)

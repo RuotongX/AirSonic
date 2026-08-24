@@ -269,7 +269,7 @@ fun CastingBar(deviceName: String, startedAt: Long, spectrum: FloatArray, onStop
 
 /** 投送中音量控件（滑块 + 静音键）。常驻在投送卡内，频谱下方、停止键上方——最佳实践：音量是投送卡一级控件，不滚动即可见。 */
 @Composable
-private fun VolumeRow() {
+fun VolumeRow() {
     val s = L10n.s
     val pct by CastEngine.volumePct
     val muted by CastEngine.muted
