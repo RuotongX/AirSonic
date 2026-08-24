@@ -51,7 +51,7 @@ class AirplayHttpClient(
     fun post(
         path: String,
         body: ByteArray,
-        contentType: String = "application/octet-stream",
+        contentType: String? = "application/octet-stream",
         extraHeaders: Map<String, String> = emptyMap()
     ): Response {
         ensureConnected()
@@ -59,7 +59,7 @@ class AirplayHttpClient(
         val header = buildString {
             append("POST $path HTTP/1.1\r\n")
             append("Host: $host\r\n")
-            append("Content-Type: $contentType\r\n")
+            if (contentType != null) append("Content-Type: $contentType\r\n")
             append("Content-Length: ${body.size}\r\n")
             append("User-Agent: AirPlay/950.7.1\r\n")
             for ((k, v) in extraHeaders) {

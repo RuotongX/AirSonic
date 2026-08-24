@@ -65,10 +65,11 @@ class PairingHandshake(
     /**
      * pair-pin-start：请求接收端（Apple TV 等）在屏幕显示 4 位配对 PIN。
      * 之后用该 PIN 走非 transient pairSetup(pin)。
-     * 注意：**不要带 X-Apple-HKP 头**——pyatv 发此请求无该头；带了 Apple TV(tvOS 26) 直接 501。
+     * 注意：对齐 pyatv——**不带 X-Apple-HKP、不带 Content-Type**（空 body）；
+     * 带了 Apple TV(tvOS 26) 直接 501。
      */
     fun pairPinStart(): Boolean = runCatching {
-        val code = http.post("/pair-pin-start", ByteArray(0)).statusCode
+        val code = http.post("/pair-pin-start", ByteArray(0), contentType = null).statusCode
         lastPinStartStatus = code
         code in 200..299
     }.getOrDefault(false)
