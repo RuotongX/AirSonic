@@ -16,7 +16,8 @@ import java.util.UUID
  * 身份持久化到 /tmp/jvm_ltseed + /tmp/jvm_pid → 已配对的 run 可直接 pair-verify(免PIN)。
  */
 class AppleTvHarnessTest {
-    private val HOST = "192.168.100.14"
+    // 目标可用环境变量覆盖：默认 Apple TV；ATV_HOST=<IP> 时打 macOS 隔空投放接收器
+    private val HOST = System.getenv("ATV_HOST") ?: "192.168.100.14"
     private val PORT = 7000
     private fun hex(b: ByteArray?) = b?.joinToString("") { "%02x".format(it) } ?: "null"
 
@@ -66,7 +67,7 @@ class AppleTvHarnessTest {
         val conn = ctl.connect()
         println(">>> connect(SETUP+event+RECORD) = $conn  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
         if (conn) {
-            val url = "http://192.168.100.69:8888/sample.mp4"
+            val url = System.getenv("ATV_URL") ?: "http://192.168.100.69:8888/sample.mp4"
             val ok = ctl.play(url, 0.0)
             println(">>> play($url) = $ok  lastStatus=${ctl.lastStatus} lastError=${ctl.lastError}")
             // 让 TV 有时间拉流播放
