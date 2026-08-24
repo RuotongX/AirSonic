@@ -45,18 +45,19 @@ class UpnpVolumeController(private val ctl: RenderingControlController) : Volume
 }
 
 /**
- * AirPlay 视频（play-queue /command 流程）：经 setProperty volume 下发 0.0~1.0。
- * 老 /play 回退流程不支持（setVolumeCommand 直接 false）→ UI 亮「用遥控器」提示。
+ * AirPlay 视频音量：RTSP SET_PARAMETER（RAOP dB 制，-30..0，-144 静音）。
+ * 接收端日志实证：SET_PARAMETER 驱动 "Setting software volume"（会话软件增益，不动系统音量）；
+ * play-queue setProperty volume 虽回 200 但被忽略（接收端零日志），故弃用。
  */
 class AirplayVideoVolumeController(private val ctl: AirplayVideoController) : VolumeController {
     @Volatile private var lastPct: Int = 100
     override fun setVolume(pct: Int): Boolean {
         if (pct > 0) lastPct = pct.coerceAtMost(100)
-        return ctl.setVolumeCommand(pct.coerceIn(0, 100) / 100.0)
+        return ctl.setVolumeRtsp(pctToAirplayDb(pct))
     }
     override fun getVolume(): Int? = null
     override fun setMute(muted: Boolean): Boolean =
-        ctl.setVolumeCommand(if (muted) 0.0 else lastPct / 100.0)
+        ctl.setVolumeRtsp(if (muted) -144.0 else pctToAirplayDb(lastPct))
 }
 
 /** 降级：无 RenderingControl 时，推流循环读 [gain] 给 PCM 乘增益。 */

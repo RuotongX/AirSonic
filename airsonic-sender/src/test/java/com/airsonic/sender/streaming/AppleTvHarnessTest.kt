@@ -77,7 +77,19 @@ class AppleTvHarnessTest {
             println(">>> 观察 TV 是否出画面（8s 内）")
             // 音量探针：ATV_VOLPROBE=A 只试 play-queue setProperty；=C 只试 RTSP SET_PARAMETER。
             // 每轮：mute 8s → 恢复，用户只需报「哪轮中间安静了」。
+            // =SCALE：刻度辨识（A 整数 50→1、C -30dB→0dB 各 5s），配合接收端 volume 日志判读。
             when (System.getenv("ATV_VOLPROBE")) {
+                "SCALE" -> {
+                    Thread.sleep(4000)
+                    println(">>> SCALE A volume=50.0 → ${ctl.setVolumeCommand(50.0)} status=${ctl.lastStatus}（5s）")
+                    Thread.sleep(5000)
+                    println(">>> SCALE A volume=1.0 → ${ctl.setVolumeCommand(1.0)} status=${ctl.lastStatus}（5s）")
+                    Thread.sleep(5000)
+                    println(">>> SCALE C volume=-30dB → ${ctl.setVolumeRtsp(-30.0)} status=${ctl.lastStatus}（5s）")
+                    Thread.sleep(5000)
+                    println(">>> SCALE C volume=0dB → ${ctl.setVolumeRtsp(0.0)} status=${ctl.lastStatus}（5s）")
+                    Thread.sleep(5000)
+                }
                 "A" -> {
                     Thread.sleep(4000)
                     println(">>> VOLPROBE A mute(0.0) → ${ctl.setVolumeCommand(0.0)} status=${ctl.lastStatus}（8s 应静音）")

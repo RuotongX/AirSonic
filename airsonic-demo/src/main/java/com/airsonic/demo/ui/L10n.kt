@@ -85,6 +85,7 @@ data class Strings(
     val download: String,          // 下载并安装 / Download & install
     val downloading: String,       // 下载中 / Downloading
     val updateFailed: String,      // 检查失败 / Check failed
+    val installNow: String,        // 已下载，点击安装 / Downloaded, tap to install
     val openInBrowser: String,     // 在浏览器打开 / Open in browser
     val dlnaDevice: String,         // DLNA 设备 / DLNA device
     val protocolsTitle: String,     // 支持的协议 / Supported protocols
@@ -157,6 +158,7 @@ private val ZH = Strings(
     rename = "重命名", hide = "隐藏", unhide = "取消隐藏", hiddenDevices = "隐藏的设备", renameHint = "设备显示名",
     checkUpdate = "检查更新", checkUpdateSub = "当前版本", checking = "正在检查…", upToDate = "已是最新版本",
     newVersion = "发现新版本", download = "下载并安装", downloading = "下载中", updateFailed = "检查失败",
+    installNow = "已下载完成，点击安装",
     openInBrowser = "在浏览器打开",
     dlnaDevice = "DLNA 设备",
     protocolsTitle = "支持的协议", protocolsSub = "AirPlay · DLNA · 屏幕镜像", tagSystem = "系统",
@@ -230,6 +232,7 @@ private val EN = Strings(
     rename = "Rename", hide = "Hide", unhide = "Unhide", hiddenDevices = "Hidden", renameHint = "Display name",
     checkUpdate = "Check for updates", checkUpdateSub = "Current", checking = "Checking…", upToDate = "Up to date",
     newVersion = "New version", download = "Download & install", downloading = "Downloading", updateFailed = "Check failed",
+    installNow = "Downloaded — tap to install",
     openInBrowser = "Open in browser",
     dlnaDevice = "DLNA device",
     protocolsTitle = "Supported protocols", protocolsSub = "AirPlay · DLNA · Screen mirroring", tagSystem = "System",

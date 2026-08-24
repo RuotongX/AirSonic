@@ -6,6 +6,7 @@ package com.airsonic.demo.ui
 
 import android.content.Context
 import android.content.Intent
+import android.app.DownloadManager
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.airsonic.demo.BuildConfig
@@ -83,35 +84,59 @@ object Updater {
             .split('.', '-', '_', '+')
             .mapNotNull { it.takeWhile(Char::isDigit).toIntOrNull() }
 
+    // ---- 系统 DownloadManager 下载（切后台/锁屏不断，下完回来可直接装） ----
+
+    private const val PREF = "airsonic_updater"
+    private const val KEY_DL_ID = "download_id"
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+
+    private fun apkFile(ctx: Context): File =
+        File(ctx.getExternalFilesDir("updates") ?: ctx.filesDir, "airsonic-update.apk")
+
+    /** 经系统 DownloadManager 后台下载 APK，返回下载 id（持久化，供跨进入查询）。 */
+    fun enqueueApkDownload(ctx: Context, url: String): Long {
+        val out = apkFile(ctx)
+        if (out.exists()) out.delete()
+        val req = DownloadManager.Request(Uri.parse(url))
+            .setTitle("AirSonic update")
+            .setMimeType("application/vnd.android.package-archive")
+            .setDestinationUri(Uri.fromFile(out))
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        val id = (ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+        prefs(ctx).edit().putLong(KEY_DL_ID, id).apply()
+        return id
+    }
+
     /**
-     * 下载 APK 到 externalCacheDir。[onProgress] 回调 0..100（总长未知时回调 -1）。
-     * 返回本地文件；失败返回 null。
+     * 查询上次入队的下载。无记录返回 null；
+     * 否则 Triple(status, progress 0..100(未知 -1), 成功时的 APK 文件)，status ∈ running/success/failed。
      */
-    suspend fun downloadApk(ctx: Context, url: String, onProgress: (Int) -> Unit): File? =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val dir = ctx.externalCacheDir ?: ctx.cacheDir
-                val out = File(dir, "airsonic-update.apk")
-                if (out.exists()) out.delete()
-                val conn = openConn(url)
-                conn.connect()
-                if (conn.responseCode !in 200..299) { conn.disconnect(); return@runCatching null }
-                val total = conn.contentLength
-                conn.inputStream.use { input ->
-                    out.outputStream().use { output ->
-                        val buf = ByteArray(64 * 1024)
-                        var read: Int; var done = 0L
-                        while (input.read(buf).also { read = it } >= 0) {
-                            output.write(buf, 0, read)
-                            done += read
-                            onProgress(if (total > 0) ((done * 100) / total).toInt() else -1)
-                        }
-                    }
-                }
-                conn.disconnect()
-                out
-            }.getOrNull()
+    fun downloadStatus(ctx: Context): Triple<String, Int, File?>? {
+        val id = prefs(ctx).getLong(KEY_DL_ID, -1L)
+        if (id < 0) return null
+        val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
+            if (!c.moveToFirst()) return null
+            val st = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+            val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+            val pct = if (total > 0) (done * 100 / total).toInt() else -1
+            return when (st) {
+                DownloadManager.STATUS_SUCCESSFUL ->
+                    Triple("success", 100, apkFile(ctx).takeIf { it.exists() && it.length() > 0 })
+                DownloadManager.STATUS_FAILED -> Triple("failed", pct, null)
+                else -> Triple("running", pct, null)
+            }
         }
+        return null
+    }
+
+    /** 安装已下载的 APK 并清掉下载记录。 */
+    fun installDownloadedApk(ctx: Context, apk: File) {
+        prefs(ctx).edit().remove(KEY_DL_ID).apply()
+        installApk(ctx, apk)
+    }
 
     /** 拉起系统安装器安装下载好的 APK。 */
     fun installApk(ctx: Context, apk: File) {

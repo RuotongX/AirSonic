@@ -824,7 +824,7 @@ private fun SonosWavRow() {
     Spacer(Modifier.height(12.dp))
 }
 
-/** 在线更新行：点一下查 GitHub Releases；查到新版再点即下载并拉起安装器。 */
+/** 在线更新行：点一下查 GitHub Releases；下载走系统 DownloadManager（切后台不断），下完点击/自动安装。 */
 @Composable
 private fun UpdateRow() {
     val ctx = LocalContext.current
@@ -835,12 +835,39 @@ private fun UpdateRow() {
     var status by remember { mutableStateOf("idle") }
     var release by remember { mutableStateOf<Updater.Release?>(null) }
     var progress by remember { mutableStateOf(0) }
+    var downloadedApk by remember { mutableStateOf<java.io.File?>(null) }
+
+    // 进入时接上在途/已完成的系统下载：下完回来直接可装，不重新下载
+    LaunchedEffect(Unit) {
+        val st = Updater.downloadStatus(ctx)
+        if (st != null) when (st.first) {
+            "success" -> if (st.third != null) { downloadedApk = st.third; status = "available" }
+            "running" -> status = "downloading"
+            else -> Unit
+        }
+        // 轮询：下载中推进度；前台时完成→自动拉起安装；失败→状态可见
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            if (status != "downloading") continue
+            val cur = Updater.downloadStatus(ctx) ?: continue
+            progress = cur.second
+            when (cur.first) {
+                "success" -> {
+                    if (cur.third != null) {
+                        downloadedApk = cur.third; status = "available"
+                        Updater.installDownloadedApk(ctx, cur.third!!)
+                    } else status = "failed"
+                }
+                "failed" -> status = "failed"
+            }
+        }
+    }
 
     val title = if (status == "available") s.download else s.checkUpdate
     val sub = when (status) {
         "checking" -> s.checking
         "uptodate" -> "${s.upToDate} · v${Updater.currentVersion}"
-        "available" -> "${s.newVersion} v${release?.versionName}"
+        "available" -> if (downloadedApk != null) s.installNow else "${s.newVersion} v${release?.versionName}"
         "downloading" -> "${s.downloading} ${if (progress >= 0) "$progress%" else "…"}"
         "failed" -> s.updateFailed
         else -> "${s.checkUpdateSub} v${Updater.currentVersion}"
@@ -849,16 +876,14 @@ private fun UpdateRow() {
 
     val onClick: () -> Unit = onClick@{
         if (busy) return@onClick
+        val apk = downloadedApk
+        if (status == "available" && apk != null) { Updater.installDownloadedApk(ctx, apk); return@onClick }
         val rel = release
         if (status == "available" && rel != null) {
             val url = rel.apkUrl
             if (url == null) { Updater.openReleasePage(ctx, rel.htmlUrl); return@onClick }
             status = "downloading"; progress = 0
-            scope.launch {
-                val apk = Updater.downloadApk(ctx, url) { progress = it }
-                if (apk != null) { status = "available"; Updater.installApk(ctx, apk) }
-                else status = "failed"
-            }
+            Updater.enqueueApkDownload(ctx, url)   // LaunchedEffect 的轮询环会接管进度/安装
         } else {
             status = "checking"
             scope.launch {
