@@ -757,17 +757,15 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
         SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
         SettingRow(Icons.Rounded.Shield, s.legalTitle, s.legalSub) { nav.navigate("legal") }
         SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
-        ForceAlacRow()
-        SonosWavRow()
+        // 调试区：版本号连点 10 下解锁（普通用户不需要兼容开关，避免误触）
+        if (CastEngine.debugUnlocked.value) {
+            ForceAlacRow()
+            SonosWavRow()
+            SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
+        }
         UpdateRow()
-        SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
         Spacer(Modifier.height(16.dp))
-        Text(
-            "${s.version} ${BuildConfig.VERSION_NAME}",
-            color = Aurora.TextDim, fontSize = 12.sp,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        )
+        VersionTapRow()
         Spacer(Modifier.height(4.dp))
         Text(
             s.licenseLine,
@@ -776,6 +774,28 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
+}
+
+/** 版本号行：连点 10 下（3 秒窗口内）解锁调试区（调试入口+兼容开关）。 */
+@Composable
+private fun VersionTapRow() {
+    val ctx = LocalContext.current
+    val s = L10n.s
+    var taps by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+    var windowStart by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
+    Text(
+        "${s.version} ${BuildConfig.VERSION_NAME}",
+        color = Aurora.TextDim, fontSize = 12.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !CastEngine.debugUnlocked.value) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - windowStart > 3000) { taps = 0; windowStart = now }
+                taps++
+                if (taps >= 10) CastEngine.setDebugUnlocked(ctx, true)
+            },
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
 }
 
 /** 「强制 ALAC」开关行：Sonos 等只收 ALAC 的设备打开；持久化，HomePod 不受影响。 */

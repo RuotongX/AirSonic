@@ -80,6 +80,8 @@ object CastEngine {
     val forceAlac = mutableStateOf(false)
     /** Sonos 直播改投无限长 WAV（AAC 电台管线不出声时的兼容兜底；持久化）。 */
     val sonosWav = mutableStateOf(true)
+    /** 调试区已解锁（设置页版本号连点 10 下；持久化）。解锁后才显示调试入口与兼容开关。 */
+    val debugUnlocked = mutableStateOf(false)
     /** 当前会话实际使用的音频编码标签（"ALAC"/"PCM"），供 UI 调试显示。 */
     val activeCodec = mutableStateOf("")
 
@@ -97,6 +99,7 @@ object CastEngine {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         forceAlac.value = p.getBoolean("force_alac", false)
         sonosWav.value = p.getBoolean("sonos_wav", true)
+        debugUnlocked.value = p.getBoolean("debug_unlocked", false)
         // 强杀/崩溃后冷启动：上次 DLNA 会话的 Stop 没发出去（电视可能还在播）→ 补发 Stop 清场
         val stale = p.getString("last_dlna_ctl", null)
         if (stale != null) {
@@ -116,6 +119,12 @@ object CastEngine {
         sonosWav.value = v
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean("sonos_wav", v).apply()
+    }
+
+    fun setDebugUnlocked(context: Context, v: Boolean) {
+        debugUnlocked.value = v
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("debug_unlocked", v).apply()
     }
 
     private var discovery: AirplayDiscovery? = null
