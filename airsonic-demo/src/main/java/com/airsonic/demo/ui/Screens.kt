@@ -776,7 +776,7 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
     }
 }
 
-/** 版本号行：连点 10 下（3 秒窗口内）解锁调试区（调试入口+兼容开关）。 */
+/** 版本号行：连点 10 下（3 秒窗口内）解锁/收起调试区（调试入口+兼容开关）。 */
 @Composable
 private fun VersionTapRow() {
     val ctx = LocalContext.current
@@ -788,11 +788,20 @@ private fun VersionTapRow() {
         color = Aurora.TextDim, fontSize = 12.sp,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !CastEngine.debugUnlocked.value) {
+            .clickable {
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (now - windowStart > 3000) { taps = 0; windowStart = now }
                 taps++
-                if (taps >= 10) CastEngine.setDebugUnlocked(ctx, true)
+                if (taps >= 10) {
+                    taps = 0
+                    val unlock = !CastEngine.debugUnlocked.value
+                    CastEngine.setDebugUnlocked(ctx, unlock)
+                    val msg = if (L10n.lang.value == Lang.EN)
+                        if (unlock) "Debug section unlocked" else "Debug section hidden"
+                    else
+                        if (unlock) "调试区已解锁" else "调试区已收起"
+                    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+                }
             },
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
     )
