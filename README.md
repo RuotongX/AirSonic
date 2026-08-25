@@ -9,7 +9,7 @@ AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链�
 - **双协议投送**：AirPlay 与 DLNA/UPnP 设备出现在**同一个设备列表**里，按图标/标签区分，用户无感。
 - **AirPlay 音频**：向 HomePod / AirPlay 音箱投送本地音频（ALAC / PCM 自动选择）；完整 HomeKit M1–M6 + pair-verify（X25519 / HKDF / ChaCha20-Poly1305）。
 - **AirPlay 视频**：向 **Apple TV / Mac** 投送本地视频文件（play-queue 通道，支持播放/暂停/进度同步，手机与接收端双向同步）。
-- **AirPlay 屏幕镜像**：整屏实时镜像到 **Apple TV / Mac**——录屏 H.264(+AAC) → MPEG-TS → **手机端 HLS 直播**（m3u8 + TS 分片，0.5s 分片），端到端延迟约 2.5~3 秒。
+- **AirPlay 屏幕镜像**：整屏实时镜像到 **Apple TV / Mac**——录屏 H.264(+AAC) → MPEG-TS → **手机端 HLS 直播**（m3u8 + TS 分片，0.5s 分片），端到端延迟：良好网络约 3.5~4 秒，弱网/热点约 7 秒（LL-HLS 阻塞刷新已启用）。
 - **AirPlay 配对**：支持 TV 屏幕显示 PIN 码的配对流程（pair-setup M1–M6），配对凭据本地持久化，二次连接免密（pair-verify）。
 - **系统音频镜像**：捕获手机系统声音（任意 app / 网页）实时投到所选音箱 —— AirPlay 走 RAOP、**Sonos 走 UPnP 实时音频流**（「手机镜像」→「投声音」）。
 - **DLNA 屏幕镜像**：**应用内投屏（自研）**——录屏 H.264 → 自研 MPEG-TS 封包 → DLNA 实时流推送，坚果 N1S 4K 等 DLNA 投影/电视可用（延迟约 1~3 秒）。
@@ -96,7 +96,7 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 
 | 协议 | 设备 | 内容 |
 |------|------|------|
-| AirPlay / AirPlay 2 | **Apple TV、Mac** | 本地视频（play-queue，双向进度同步）+ **整屏镜像**（HLS 直播，延迟约 2.5~3 秒）+ 音频 |
+| AirPlay / AirPlay 2 | **Apple TV、Mac** | 本地视频（play-queue，双向进度同步）+ **整屏镜像**（HLS 直播，好网约 3.5~4 秒）+ 音频 |
 | AirPlay / AirPlay 2 | HomePod、AirPlay 音箱 | 音频（本地文件 + 系统音频镜像，ALAC/PCM 自动选择） |
 | UPnP 实时流 | Sonos | 系统音频镜像（WAV 实时流兜底） |
 | DLNA / UPnP | 智能电视、电视盒子、Kodi、坚果投影（N1S 4K 实测）、PC 软渲染器 | 本地视频 + 音频 |
@@ -109,7 +109,7 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 - **录屏/录音权限**：屏幕镜像需授予录屏权限；声画同投还需录音权限（拒绝则降级为纯画面）。
 - **后台保活**：投送期间请保持 app 在前台；部分 ROM（如 vivo）需在系统设置中允许「自启动 + 后台高耗电」，否则切后台会被断流。
 - **调试入口**：设置页底部**版本号连点 10 下**解锁调试区（兼容开关与诊断工具）。
-- **已知限制**：AirPlay 视频/镜像的音量由接收端（Apple TV / Mac）控制，app 内音量滑块对其不生效（Apple 设计如此）；HLS 镜像存在约 2.5~3 秒固有延迟。
+- **已知限制**：AirPlay 视频/镜像的音量由接收端（Apple TV / Mac）控制，app 内音量滑块对其不生效（Apple 设计如此）；AirPlay 镜像存在约 3.5~4 秒（好网）/ 7 秒（热点）的固有延迟——Apple 规定低延迟小片只在 HTTP/2+TLS+ECN/SACK 链路启用，局域网裸 HTTP 无法满足，该延迟已为此路线的物理极限。
 
 ## 📄 授权 / License
 
