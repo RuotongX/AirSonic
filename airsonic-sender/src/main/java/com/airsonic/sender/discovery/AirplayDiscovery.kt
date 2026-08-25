@@ -191,12 +191,58 @@ class AirplayDiscovery(context: Context) {
         queuedNames.clear()
     }
 
-    private fun toAirDevice(info: NsdServiceInfo): AirDevice {
-        // resolve 可能给回 IPv6（带 scope 的 hostAddress 后续 HTTP/探测全不可用）。
-        // compileSdk 33 没有 hostAddresses 可选 IPv4，先把这种情况显式暴露在日志里。
-        if (info.host is java.net.Inet6Address) {
-            Log.w(TAG, "resolved IPv6 host for ${info.serviceName}: ${info.host?.hostAddress} (probe/HTTP 可能不可用)")
+    /**
+     * 选出可直连的地址：优先 IPv4，其次非链路本地 IPv6，最后才用链路本地（补 scope id）。
+     *
+     * 背景：NsdManager resolve 可能只给回 fe80:: 链路本地 IPv6 且不带 scope，
+     * 后续 HTTP/配对 connect 直接 EINVAL（compileSdk 33 拿不到 hostAddresses，反射拿）。
+     */
+    private fun selectAddress(info: NsdServiceInfo): java.net.InetAddress? {
+        val candidates = mutableListOf<java.net.InetAddress>()
+        // API 34+ 的 getHostAddresses()：运行时反射取，compileSdk 33 也能用
+        runCatching {
+            @Suppress("UNCHECKED_CAST")
+            val list = info.javaClass.getMethod("getHostAddresses").invoke(info)
+                as? List<java.net.InetAddress>
+            if (list != null) candidates.addAll(list)
         }
+        info.host?.let { if (it !in candidates) candidates.add(it) }
+
+        candidates.firstOrNull { it is java.net.Inet4Address }?.let { return it }
+        candidates.firstOrNull {
+            it is java.net.Inet6Address && !it.isLinkLocalAddress
+        }?.let { return it }
+        // 只剩链路本地：必须补 scope id，否则 connect EINVAL
+        candidates.firstOrNull()?.let { addr ->
+            if (addr is java.net.Inet6Address && addr.isLinkLocalAddress &&
+                addr.scopedInterface == null && addr.scopeId == 0) {
+                val scoped = attachScope(addr)
+                if (scoped != null) {
+                    Log.i(TAG, "链路本地地址补 scope: ${addr.hostAddress} -> ${scoped.hostAddress}")
+                    return scoped
+                }
+            }
+            Log.w(TAG, "no IPv4 candidate for ${info.serviceName}, using ${addr.hostAddress}")
+            return addr
+        }
+        return null
+    }
+
+    /** 给链路本地 IPv6 挂上活动网卡 scope（找一张有链路本地地址且在用的接口）。 */
+    private fun attachScope(addr: java.net.Inet6Address): java.net.InetAddress? = runCatching {
+        val ifaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
+        for (iface in ifaces) {
+            if (!iface.isUp || iface.isLoopback) continue
+            val hasV6 = iface.inetAddresses.toList().any { it is java.net.Inet6Address }
+            if (hasV6) {
+                return java.net.Inet6Address.getByAddress(null, addr.address, iface)
+            }
+        }
+        null
+    }.getOrNull()
+
+    private fun toAirDevice(info: NsdServiceInfo): AirDevice {
+        val hostAddr = selectAddress(info)
         val txt = parseTxt(info)
         val features = txt["features"] ?: txt["ft"]
         val model = txt["model"] ?: txt["am"] ?: ""
@@ -219,7 +265,7 @@ class AirplayDiscovery(context: Context) {
 
         return AirDevice(
             name = info.serviceName,
-            host = info.host?.hostAddress ?: "",
+            host = hostAddr?.hostAddress ?: "",
             port = info.port,
             type = type,
             capabilities = DeviceCapabilities(
