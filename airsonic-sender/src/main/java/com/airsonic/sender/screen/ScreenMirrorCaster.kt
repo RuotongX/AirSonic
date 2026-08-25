@@ -44,6 +44,14 @@ class ScreenMirrorCaster(
      * 0=不强制，用编码器自带 [iFrameIntervalSec] GOP（DLNA 裸流路径）。
      */
     private val syncFrameIntervalMs: Long = 0,
+    /**
+     * fMP4 旁路（仅 HLS FMP4 模式接线，默认 null 零开销零行为变化）：
+     * 编码器原始帧回调——SPS/PPS（裸 NAL）、Annex-B 视频帧（不含 AUD，AUD 是 TsMuxer 内部加的）、
+     * AAC 帧（带 ADTS 头，pts 已按 HLS 惯例 +1s）。数据与 TS 路径同源同 pts 基准。
+     */
+    private val onCodecConfig: ((sps: ByteArray, pps: ByteArray) -> Unit)? = null,
+    private val onRawVideoFrame: ((data: ByteArray, ptsUs: Long, keyframe: Boolean) -> Unit)? = null,
+    private val onRawAudioFrame: ((adtsFrame: ByteArray, ptsUs: Long) -> Unit)? = null,
 ) {
     private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
@@ -179,6 +187,7 @@ class ScreenMirrorCaster(
             val nals = splitAnnexB(data)
             if (nals.size >= 2) {
                 muxer.setSpsPps(withStartCode(nals[0]), withStartCode(nals[1]))
+                onCodecConfig?.invoke(nals[0], nals[1])
                 ready = true
                 onLog("SPS/PPS 已缓存 (${nals[0].size}B/${nals[1].size}B)")
             }
@@ -195,6 +204,7 @@ class ScreenMirrorCaster(
             onSegmentBoundary.invoke(relPts)
         }
         muxer.writeVideoFrame(data, relPts, keyframe)
+        onRawVideoFrame?.invoke(data, relPts, keyframe)   // fMP4 旁路：原始帧（无 AUD）
         if (keyframe) {
             inKeyframe = false
             if (!droppedInFrame) gating = false   // 本关键帧完整发出 → 拥塞恢复完成
@@ -207,6 +217,7 @@ class ScreenMirrorCaster(
     /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起，HLS 模式同样 +1s）。无音轨模式直接丢弃。 */
     fun writeAudioFrame(adtsFrame: ByteArray, ptsUs: Long) {
         if (withAudio) muxer.writeAudioFrame(adtsFrame, ptsUs + hlsPtsOffsetUs)
+        onRawAudioFrame?.invoke(adtsFrame, ptsUs + hlsPtsOffsetUs)
     }
 
     /** 让编码器立刻产一个关键帧（新观众接入/传输丢包时用，把花屏窗口压到最短）。 */

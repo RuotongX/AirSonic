@@ -11,7 +11,7 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * HLS 直播服务器（EVENT 型滑动窗口播放列表 + 内存 TS 分片 + LL-HLS 小片）。
+ * HLS 直播服务器（EVENT 型滑动窗口播放列表 + 内存分片 + LL-HLS 小片；TS / fMP4 双容器）。
  *
  * 为什么需要它：AirPlay 接收端（macOS/tvOS 的 AVPlayer）经 play-queue 播「无限长裸 TS」
  * 永远停在 loading（ffmpeg 产流 + 假大 Content-Length 两种形态实测都如此），
@@ -31,6 +31,9 @@ import kotlin.concurrent.thread
  *    每个分片因此天然以「PAT/SDT/PMT → SPS/PPS → IDR」起手（切片点配合 TsMuxer.forcePatPmt）。
  *  - 播放列表只含已关闭分片（滑动窗口 [windowSize] 个）+ 当前开放分片的已关闭小片。
  */
+/** HLS 容器格式。TS=MPEG-TS 分片（兼容兜底）；FMP4=fragmented MP4（LL-HLS 小片的原生形态）。 */
+enum class Container { TS, FMP4 }
+
 class HlsLiveServer(
     /** 播放列表保留的已关闭分片数。0.5s GOP → 窗口≈3s。 */
     private val windowSize: Int = 6,
@@ -42,6 +45,10 @@ class HlsLiveServer(
     private val lowLatency: Boolean = true,
     /** false=只发 LL 头部（SERVER-CONTROL/PART-INF），不发 PART/PRELOAD-HINT（A/B 分解用）。 */
     private val llParts: Boolean = true,
+    /** 容器格式：TS（兜底，AVPlayer 拒收其小片）/ FMP4（LL-HLS 原生小片形态，延迟 ~1-1.5s）。 */
+    private val container: Container = Container.TS,
+    /** FMP4 模式：init 段是否声明 AAC 音轨（需等首帧 ADTS 解析出 ASC）。TS 模式忽略。 */
+    private val withAudio: Boolean = false,
     private val onLog: (String) -> Unit = {},
     /** URL 基路径（默认随机；测试可传固定值便于 curl 解剖）。 */
     baseId: String = java.util.UUID.randomUUID().toString().replace("-", ""),
@@ -55,6 +62,19 @@ class HlsLiveServer(
     private val base = "/hls/$baseId"
     /** 播放列表路径（GET 该路径拿 m3u8）。分片路径 = $base/seg<seq>.ts，小片 = $base/seg<seq>.part<i>.ts。 */
     val playlistPath = "$base/live.m3u8"
+    /** FMP4 封包器（仅 FMP4 模式）：小片=独立 fragment，分片=若干 fragment 顺序拼接。 */
+    private val fmp4 = if (container == Container.FMP4) Fmp4Muxer(hasAudio = withAudio) else null
+    /** FMP4 模式的 init 段路径（EXT-X-MAP 指向它）。 */
+    val initPath = "$base/init.mp4"
+    private val segExt = if (container == Container.FMP4) "m4s" else "ts"
+    private val segContentType = if (container == Container.FMP4) "video/iso.segment" else "video/mp2t"
+    // CoreMedia 对 EXT-X-PART 时长有双向硬校验（违者 -12642 Playlist parse error，实测两轮）：
+    // 非末尾小片 DURATION ∈ [85%×PART-TARGET, PART-TARGET]。小片只能整帧切（30fps → ±33ms 起步，
+    // 再加调度抖动），250ms 目标下 [212.5,250] 容差带放不下一个帧间隔 → FMP4 模式广告 350ms
+    // （容差带 [297.5,350]，切点 300ms，超调 ~40ms 仍落在带内），HOLD-BACK=3×0.35≈1.05s。
+    // TS 模式保持 250/750 不动（生产已验证，且 AVPlayer 根本不解析 TS 小片）。
+    private val advertisedPartTargetMs = if (container == Container.FMP4) partTargetMs + 100 else partTargetMs
+    private val partCutMs = if (container == Container.FMP4) advertisedPartTargetMs - 50 else partTargetMs
 
     private val lock = Object()
     private val published = ArrayDeque<Segment>()
@@ -112,8 +132,9 @@ class HlsLiveServer(
         }
     }
 
-    /** 灌一个 TS 包（追加到当前小片与整段缓冲；小片按墙钟到点自动关闭）。 */
+    /** 灌一个 TS 包（追加到当前小片与整段缓冲；小片按墙钟到点自动关闭）。FMP4 模式忽略。 */
     fun acceptPacket(pkt: ByteArray) {
+        if (container == Container.FMP4) return
         synchronized(lock) {
             val now = System.currentTimeMillis()
             if (curPartStartMs < 0) curPartStartMs = now
@@ -122,13 +143,50 @@ class HlsLiveServer(
         }
     }
 
+    /** FMP4 模式：灌入 SPS/PPS（Annex-B 或裸 NAL），供 init 段 avcC 与宽高解析。 */
+    fun setVideoConfig(sps: ByteArray, pps: ByteArray) {
+        fmp4?.setSpsPps(sps, pps)
+    }
+
+    /** FMP4 模式：喂一帧 Annex-B 视频（原始编码器输出，无 AUD）；样本攒进当前小片 fragment。 */
+    fun acceptVideoFrame(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
+        val m = fmp4 ?: return
+        synchronized(lock) {
+            val now = System.currentTimeMillis()
+            if (curPartStartMs < 0) curPartStartMs = now
+            m.writeVideoFrame(data, ptsUs, keyframe)
+            // fMP4 小片切点：见 advertisedPartTargetMs 注释（时长须落在 [85%,100%]×PART-TARGET 带内）
+            if (now - curPartStartMs >= partCutMs) closePartLocked(now)
+        }
+    }
+
+    /** FMP4 模式：喂一帧 AAC（带 ADTS 头，muxer 自剥）；首帧解析出 ASC 后 init 段就绪。 */
+    fun acceptAudioFrame(adtsFrame: ByteArray, ptsUs: Long) {
+        val m = fmp4 ?: return
+        synchronized(lock) {
+            m.writeAudioFrame(adtsFrame, ptsUs)
+        }
+    }
+
     /** 关闭当前小片（开放分片内序号递增），唤醒阻塞中的 LL-HLS 请求。 */
     private fun closePartLocked(nowMs: Long) {
-        val data = curPartBuf.toByteArray()
-        curPartBuf.reset()
-        if (data.isNotEmpty()) {
+        // FMP4：小片 = 把已积累样本打成一个独立 fragment（styp+moof+mdat），同时进整段缓冲；
+        // TS：小片 = 这段时间攒下的裸 TS 字节（整段缓冲在 acceptPacket 里已同步追加）。
+        val m = fmp4
+        val data = if (m != null) {
+            val frag = m.flushFragment()
+            if (frag != null) curBuf.write(frag)
+            frag
+        } else {
+            val d = curPartBuf.toByteArray()
+            curPartBuf.reset()
+            d
+        }
+        if (data != null && data.isNotEmpty()) {
+            // FMP4：卡顿后恢复时墙钟跨度可能超 PART-TARGET，钳到广告值（parse error 是硬拒）
             val durUs = (nowMs - curPartStartMs) * 1000
-            curParts.add(Part(curParts.size, data, durUs))
+            curParts.add(Part(curParts.size, data,
+                if (m != null) minOf(durUs, advertisedPartTargetMs * 1000) else durUs))
             lock.notifyAll()
         }
         curPartStartMs = nowMs
@@ -197,8 +255,14 @@ class HlsLiveServer(
                     respond(out, 200, "OK", "application/vnd.apple.mpegurl", body, method == "HEAD",
                         lastModifiedMs = System.currentTimeMillis())
                 }
-                reqPath.startsWith("$base/seg") && reqPath.endsWith(".ts") -> {
-                    val name = reqPath.removePrefix("$base/seg").removeSuffix(".ts")
+                reqPath == initPath -> {
+                    val init = fmp4?.initSegment()
+                    if (init == null) respond(out, 404, "Not Found", "text/plain", null, method == "HEAD")
+                    else respond(out, 200, "OK", "video/mp4", init, method == "HEAD",
+                        lastModifiedMs = System.currentTimeMillis())
+                }
+                reqPath.startsWith("$base/seg") && (reqPath.endsWith(".ts") || reqPath.endsWith(".m4s")) -> {
+                    val name = reqPath.removePrefix("$base/seg").removeSuffix(".ts").removeSuffix(".m4s")
                     if (name.contains(".part")) {
                         // 小片：已关闭的直出；PRELOAD-HINT 指向的未关闭小片阻塞等关闭
                         val seq = name.substringBefore(".part").toLongOrNull()
@@ -209,7 +273,7 @@ class HlsLiveServer(
                         val seg = synchronized(lock) { published.firstOrNull { it.seq == seq } }
                         onLog("GET seg seq=$seq hit=${seg != null} (窗口 ${published.firstOrNull()?.seq}..${published.lastOrNull()?.seq})")
                         if (seg == null) respond(out, 404, "Not Found", "text/plain", null, method == "HEAD")
-                        else respond(out, 200, "OK", "video/mp2t", seg.data, method == "HEAD",
+                        else respond(out, 200, "OK", segContentType, seg.data, method == "HEAD",
                             lastModifiedMs = seg.wallStartMs)
                     }
                 }
@@ -253,11 +317,11 @@ class HlsLiveServer(
             while (running) {
                 // 已发布分片的小片 / 开放分片的已关闭小片
                 published.firstOrNull { it.seq == seq }?.parts?.firstOrNull { it.idx == idx }?.let { p ->
-                    respond(out, 200, "OK", "video/mp2t", p.data, headOnly); return
+                    respond(out, 200, "OK", segContentType, p.data, headOnly); return
                 }
                 if (curSeq == seq) {
                     curParts.firstOrNull { it.idx == idx }?.let { p ->
-                        respond(out, 200, "OK", "video/mp2t", p.data, headOnly); return
+                        respond(out, 200, "OK", segContentType, p.data, headOnly); return
                     }
                     // 还未关闭（PRELOAD-HINT）：阻塞等它关闭
                     val wait = deadline - System.currentTimeMillis()
@@ -283,8 +347,8 @@ class HlsLiveServer(
             openPartIdx = curParts.size
         }
         val target = maxOf(2, ((segs.maxOfOrNull { it.durationUs } ?: 1_000_000L) + 999_999) / 1_000_000)
-        val partTargetSec = "%.3f".format(partTargetMs / 1000.0)
-        val holdBackSec = "%.3f".format(partTargetMs * 3 / 1000.0)
+        val partTargetSec = "%.3f".format(advertisedPartTargetMs / 1000.0)
+        val holdBackSec = "%.3f".format(advertisedPartTargetMs * 3 / 1000.0)
         val sb = StringBuilder()
         sb.append("#EXTM3U\n#EXT-X-VERSION:${if (lowLatency) 9 else 3}\n")
         sb.append("#EXT-X-TARGETDURATION:$target\n")
@@ -294,6 +358,10 @@ class HlsLiveServer(
             sb.append("#EXT-X-PART-INF:PART-TARGET=$partTargetSec\n")
         }
         sb.append("#EXT-X-MEDIA-SEQUENCE:${segs.firstOrNull()?.seq ?: 0}\n")
+        // fMP4：所有分片/小片共用同一个 init 段（未就绪前先不发 MAP——AVPlayer 拿到 MAP 就会拉 init.mp4）
+        if (container == Container.FMP4 && fmp4?.initReady == true) {
+            sb.append("#EXT-X-MAP:URI=\"init.mp4\"\n")
+        }
         // PROGRAM-DATE-TIME：对齐 ffmpeg 产出形态（EXTINF 之后、URI 之前）。
         // CoreMedia HLS 子流靠它把分片映射上时间轴。
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US)
@@ -301,23 +369,23 @@ class HlsLiveServer(
             // 小片先于所属分片的 EXTINF（spec 顺序）；part0 含 IDR 标 INDEPENDENT
             if (lowLatency && llParts) for (p in s.parts) {
                 sb.append("#EXT-X-PART:DURATION=${"%.6f".format(p.durationUs / 1_000_000.0)},")
-                sb.append("URI=\"seg${s.seq}.part${p.idx}.ts\"")
+                sb.append("URI=\"seg${s.seq}.part${p.idx}.$segExt\"")
                 if (p.idx == 0) sb.append(",INDEPENDENT=YES")
                 sb.append("\n")
             }
             sb.append("#EXTINF:${"%.6f".format(s.durationUs / 1_000_000.0)},\n")
             sb.append("#EXT-X-PROGRAM-DATE-TIME:${fmt.format(java.util.Date(s.wallStartMs))}\n")
-            sb.append("seg${s.seq}.ts\n")
+            sb.append("seg${s.seq}.$segExt\n")
         }
         // 开放分片的已关闭小片 + 预载提示（GET 该 URI 阻塞到小片关闭）
         if (lowLatency && llParts) {
             for (p in openParts) {
                 sb.append("#EXT-X-PART:DURATION=${"%.6f".format(p.durationUs / 1_000_000.0)},")
-                sb.append("URI=\"seg${openSeq}.part${p.idx}.ts\"")
+                sb.append("URI=\"seg${openSeq}.part${p.idx}.$segExt\"")
                 if (p.idx == 0) sb.append(",INDEPENDENT=YES")
                 sb.append("\n")
             }
-            sb.append("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"seg${openSeq}.part${openPartIdx}.ts\"\n")
+            sb.append("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"seg${openSeq}.part${openPartIdx}.$segExt\"\n")
         }
         return sb.toString()
     }

@@ -724,13 +724,23 @@ object CastEngine {
                 // AirPlay 镜像走 HLS（AVPlayer 实测不吃无限长裸 TS：ffmpeg 产流/假大 Content-Length
                 // 两种形态都永远停 loading；HLS 是 AVPlayer 原生直播形态，秒开）。
                 // DLNA 渲染器继续走无限长 TS 直播流（新观众接入即补关键帧；队列 8192 包≈1.5MB）。
+                // 【生产切换点】fMP4 容器版 LL-HLS（真发 EXT-X-PART 小片，目标端到端 ~1-1.5s）。
+                // false=已验证兜底：TS 容器 + 只发 LL 头部（SERVER-CONTROL/PART-INF），稳态 ~3.5s。
+                val mirrorFmp4 = false
+                // 有 RECORD_AUDIO 才开音轨（用户在授权弹窗拒绝也能降级为纯画面镜像）
+                val withAudio = androidx.core.content.ContextCompat.checkSelfPermission(
+                    app, android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                 val hls = if (airplayVideo) com.airsonic.sender.streaming.HlsLiveServer(
                     // HLS 模式 0.5s 强制关键帧 → 分片 ~0.5s；minSegment 须小于它（防超短片即可）
                     minSegmentUs = 400_000,
                     // LL-HLS 实测：CoreMedia 拒收 TS 容器上的 EXT-X-PART（永远 loading，err=-12753），
-                    // 小片大概率要 fMP4 才行；但 SERVER-CONTROL+PART-INF 可安全开启——
-                    // AVPlayer 会进阻塞刷新（_HLS_msn 长轮询）+ LL 带宽预测，抖动链路明显改善。
-                    lowLatency = true, llParts = false,
+                    // 小片须走 fMP4；TS 模式只发 SERVER-CONTROL+PART-INF 头部——AVPlayer 会进
+                    // 阻塞刷新（_HLS_msn 长轮询）+ LL 带宽预测，抖动链路明显改善。
+                    lowLatency = true, llParts = mirrorFmp4,
+                    container = if (mirrorFmp4) com.airsonic.sender.streaming.Container.FMP4
+                                else com.airsonic.sender.streaming.Container.TS,
+                    withAudio = withAudio,
                     onLog = { android.util.Log.i("CastEngine", "mirror-hls: $it") }) else null
                 hlsServer = hls
                 val srv = if (airplayVideo) null else com.airsonic.sender.streaming.LiveAudioHttpServer(
@@ -743,10 +753,6 @@ object CastEngine {
                 val scale = minOf(1f, 1920f / maxOf(m.widthPixels, m.heightPixels))
                 val w = ((m.widthPixels * scale).toInt() + 1) / 2 * 2
                 val h = ((m.heightPixels * scale).toInt() + 1) / 2 * 2
-                // 有 RECORD_AUDIO 才开音轨（用户在授权弹窗拒绝也能降级为纯画面镜像）
-                val withAudio = androidx.core.content.ContextCompat.checkSelfPermission(
-                    app, android.Manifest.permission.RECORD_AUDIO
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                 val c = com.airsonic.sender.screen.ScreenMirrorCaster(
                     width = w, height = h, dpi = m.densityDpi, bitRate = 10_000_000,
                     withAudio = withAudio,
@@ -757,6 +763,10 @@ object CastEngine {
                     onSegmentBoundary = if (hls != null) ({ pts -> hls.boundary(pts) }) else null,
                     // HLS：0.5s 一个关键帧 → 分片 0.5s，AVPlayer 直播缓冲量减半（降延迟主力）
                     syncFrameIntervalMs = if (hls != null) 500L else 0L,
+                    // fMP4 旁路（mirrorFmp4=false 时全为 null，零行为变化）：原始帧直送 Fmp4Muxer
+                    onCodecConfig = if (mirrorFmp4 && hls != null) ({ sps, pps -> hls.setVideoConfig(sps, pps) }) else null,
+                    onRawVideoFrame = if (mirrorFmp4 && hls != null) ({ d, pts, key -> hls.acceptVideoFrame(d, pts, key) }) else null,
+                    onRawAudioFrame = if (mirrorFmp4 && hls != null) ({ d, pts -> hls.acceptAudioFrame(d, pts) }) else null,
                 )
                 caster = c
                 val proj = projection ?: run { fail(L10n.s.setupFail, gen); return@launch }

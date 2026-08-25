@@ -74,9 +74,13 @@ class HlsMirrorHarnessTest {
         // ---- 切片管线：TsMuxer → HlsLiveServer（关键帧前 forcePatPmt + boundary，与 caster 一致）----
         // HLS_FEED=files：对照实验——不产自己的流，把 ffmpeg 的 hls/live*.ts 灌进同一个服务器，
         // 用于区分「服务器/播放列表行为」与「TS 字节」哪一侧不被 CoreMedia 接受。
+        // HLS_CONTAINER=fmp4：fMP4 容器版 LL-HLS（小片=独立 fragment，AVPlayer 唯一接受的小片形态）。
+        val fmp4Mode = System.getenv("HLS_CONTAINER") == "fmp4"
         val hls = HlsLiveServer(onLog = { println(">>> HLS $it") },
             lowLatency = System.getenv("HLS_LL") != "off",
             llParts = System.getenv("HLS_LL_PARTS") != "off",
+            container = if (fmp4Mode) Container.FMP4 else Container.TS,
+            withAudio = aacFrames.isNotEmpty(),
             baseId = if (System.getenv("HLS_FEED") == "verbatim") "debug" else
                 java.util.UUID.randomUUID().toString().replace("-", ""))
         val port = hls.start()
@@ -113,6 +117,30 @@ class HlsMirrorHarnessTest {
                     }
                 }
             }
+        } else if (fmp4Mode) {
+        // fMP4：原始 Annex-B 帧直送服务器（与 caster 的 onRawVideoFrame 旁路同形），不经过 TsMuxer
+        hls.setVideoConfig(sps!!, pps!!)
+        val frameDurUs = 33_333L; val aacDurUs = 23_220L
+        val loopDurUs = aus.size * frameDurUs
+        val ptsOffset = 1_000_000L   // 与 TS 路径一致：+1s 惯例（CoreMedia 对 0 起播有拒产样本风险）
+        println("=== HLS HARNESS container=fmp4 ===")
+        thread(isDaemon = true, name = "hls-fmp4-feeder") {
+            var loop = 0L
+            while (feeding.get()) {
+                var ai = 0
+                aus.forEachIndexed { i, au ->
+                    if (!feeding.get()) return@thread
+                    val pts = ptsOffset + loop * loopDurUs + i * frameDurUs
+                    if (au.key) hls.boundary(pts)
+                    hls.acceptVideoFrame(au.data, pts, au.key)
+                    while (ai < aacFrames.size && ai * aacDurUs <= i * frameDurUs) {
+                        hls.acceptAudioFrame(aacFrames[ai], ptsOffset + loop * loopDurUs + ai * aacDurUs); ai++
+                    }
+                    Thread.sleep(33)
+                }
+                loop++
+            }
+        }
         } else {
         val muxer = TsMuxer(audioPid = if (aacFrames.isNotEmpty()) 0x102 else null) { pkt -> hls.acceptPacket(pkt) }
         muxer.setSpsPps(sps!!, pps!!)

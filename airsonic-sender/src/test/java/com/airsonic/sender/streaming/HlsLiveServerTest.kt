@@ -58,6 +58,34 @@ class HlsLiveServerTest {
         hls.stop()
     }
 
+    @Test
+    fun `FMP4 模式：EXT-X-MAP 与 m4s 小片可服务`() {
+        val hls = HlsLiveServer(container = Container.FMP4, withAudio = false)
+        val port = hls.start()
+        // sample.h264 的 SPS/PPS（Baseline 1280x720）
+        fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        hls.setVideoConfig(hex("6742c01fd9005005bb0110000003001000000303c0f1832480"), hex("68cb83cb20"))
+        hls.boundary(0)
+        hls.acceptVideoFrame(byteArrayOf(0, 0, 0, 1, 0x65) + ByteArray(50), 1_000_000, true)
+        hls.acceptVideoFrame(byteArrayOf(0, 0, 0, 1, 0x41) + ByteArray(20), 1_033_333, false)
+        hls.boundary(1_000_000)     // 关闭小片与分片 0
+        assertEquals(1, hls.closedSegments)
+
+        val base = hls.playlistPath.substringBeforeLast('/')
+        val pl = fetch(port, hls.playlistPath)
+        assertTrue(pl.contains("#EXT-X-MAP:URI=\"init.mp4\""))
+        assertTrue(pl.contains("seg0.m4s"))
+        assertTrue(pl.contains("URI=\"seg0.part0.m4s\",INDEPENDENT=YES"))
+        // init 段：ftyp 起手；小片/分片：styp 起手，Content-Type 为 fMP4
+        val init = fetchBytes(port, "$base/init.mp4")
+        assertEquals("ftyp", String(init, 4, 4, Charsets.ISO_8859_1))
+        val part = fetchBytes(port, "$base/seg0.part0.m4s")
+        assertEquals("styp", String(part, 4, 4, Charsets.ISO_8859_1))
+        val seg = fetchBytes(port, "$base/seg0.m4s")
+        assertEquals("styp", String(seg, 4, 4, Charsets.ISO_8859_1))
+        hls.stop()
+    }
+
     private fun fetch(port: Int, path: String): String = String(fetchBytes(port, path), Charsets.US_ASCII)
 
     private fun fetchBytes(port: Int, path: String): ByteArray {
