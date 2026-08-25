@@ -8,9 +8,13 @@ AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链�
 
 - **双协议投送**：AirPlay 与 DLNA/UPnP 设备出现在**同一个设备列表**里，按图标/标签区分，用户无感。
 - **AirPlay 音频**：向 HomePod / AirPlay 音箱投送本地音频（ALAC / PCM 自动选择）；完整 HomeKit M1–M6 + pair-verify（X25519 / HKDF / ChaCha20-Poly1305）。
+- **AirPlay 视频**：向 **Apple TV / Mac** 投送本地视频文件（play-queue 通道，支持播放/暂停/进度同步，手机与接收端双向同步）。
+- **AirPlay 屏幕镜像**：整屏实时镜像到 **Apple TV / Mac**——录屏 H.264(+AAC) → MPEG-TS → **手机端 HLS 直播**（m3u8 + TS 分片，0.5s 分片），端到端延迟约 2.5~3 秒。
+- **AirPlay 配对**：支持 TV 屏幕显示 PIN 码的配对流程（pair-setup M1–M6），配对凭据本地持久化，二次连接免密（pair-verify）。
 - **系统音频镜像**：捕获手机系统声音（任意 app / 网页）实时投到所选音箱 —— AirPlay 走 RAOP、**Sonos 走 UPnP 实时音频流**（「手机镜像」→「投声音」）。
-- **投画面（整屏镜像）**：**应用内投屏（自研）**——录屏 H.264 → 自研 MPEG-TS 封包 → DLNA 实时流推送，坚果 N1S 4K 等 DLNA 投影/电视可用（延迟约 1~3 秒）。
+- **DLNA 屏幕镜像**：**应用内投屏（自研）**——录屏 H.264 → 自研 MPEG-TS 封包 → DLNA 实时流推送，坚果 N1S 4K 等 DLNA 投影/电视可用（延迟约 1~3 秒）。
 - **DLNA 视频 + 音频**：向智能电视 / 盒子 / Kodi 等 MediaRenderer 投送本地视频/音频，支持播放/暂停/拖动/停止 + 进度（AVTransport SOAP）。
+- **HTTP 流输出**：不选设备也能投——系统声音编码后直接在局域网开直播 URL，VLC/浏览器/任意播放器可听（AirMusic 式）。
 - **实时频谱**：投送页跟着音乐跳动的 FFT 频谱条（纯 Kotlin Cooley-Tukey，无依赖）。
 - **设备发现**：mDNS（AirPlay `_airplay._tcp`）+ SSDP（DLNA `MediaRenderer`）实时发现局域网设备。
 - **设备管理**：每台设备可重命名、永久隐藏 / 取消隐藏（本地持久化）。
@@ -31,7 +35,9 @@ AirSonic/
 │       ├── pairing/     # AirPlay2 配对：TLV8 / X25519 / HKDF / ChaCha20 / 握手
 │       ├── dlna/        # DLNA：DlnaProtocol（SOAP/DIDL 纯函数）/ DlnaController / LanHttp（安全访问）
 │       ├── screen/      # 屏幕镜像：ScreenMirrorCaster（MediaProjection→VirtualDisplay→H.264）
-│       └── streaming/   # RTP 音频、加密通道、视频会话控制、系统音频实时流、FFT 频谱、LocalMediaHttpServer、TsMuxer（MPEG-TS 封包）
+│       └── streaming/   # RTP 音频、加密通道、AirplayVideoController（play-queue 视频会话）、
+│                        # HlsLiveServer（HLS 直播切片）、TsMuxer（MPEG-TS 封包）、
+│                        # 系统音频实时流、FFT 频谱、LocalMediaHttpServer
 └── airsonic-demo/     # 产品 app（Compose / Aurora UI）
     └── src/main/java/com/airsonic/demo/ui/
         ├── StudioActivity   # 入口
@@ -90,10 +96,20 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 
 | 协议 | 设备 | 内容 |
 |------|------|------|
-| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱、Apple TV、Mac | 音频（本地文件 + 系统音频镜像；视频投 Apple TV 仍在攻坚） |
-| UPnP 实时流 | Sonos | 系统音频镜像（`x-rincon-mp3radio` 实时流） |
+| AirPlay / AirPlay 2 | **Apple TV、Mac** | 本地视频（play-queue，双向进度同步）+ **整屏镜像**（HLS 直播，延迟约 2.5~3 秒）+ 音频 |
+| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱 | 音频（本地文件 + 系统音频镜像，ALAC/PCM 自动选择） |
+| UPnP 实时流 | Sonos | 系统音频镜像（WAV 实时流兜底） |
 | DLNA / UPnP | 智能电视、电视盒子、Kodi、坚果投影（N1S 4K 实测）、PC 软渲染器 | 本地视频 + 音频 |
-| **DLNA 实时屏幕流（自研）** | 坚果 N1S 4K 等支持 `video/mp2t` 的 DLNA 渲染器 | **应用内整屏镜像**：录屏 H.264 → MPEG-TS 实时流推送（「手机镜像」→「应用内投屏」，延迟约 1~3 秒） |
+| **DLNA 实时屏幕流（自研）** | 坚果 N1S 4K 等支持 `video/mp2t` 的 DLNA 渲染器 | **应用内整屏镜像**：录屏 H.264 → MPEG-TS 实时流推送（延迟约 1~3 秒） |
+
+## 🚀 使用要点
+
+- **同一局域网**：手机与接收设备须在同一 Wi-Fi（部分路由器开启了 AP 隔离会导致发现不到设备）。
+- **AirPlay 首次配对**：投 Apple TV / Mac 时 TV 屏幕会显示 4 位 PIN 码，在 app 弹窗中输入即可；凭据本机保存，之后免密。
+- **录屏/录音权限**：屏幕镜像需授予录屏权限；声画同投还需录音权限（拒绝则降级为纯画面）。
+- **后台保活**：投送期间请保持 app 在前台；部分 ROM（如 vivo）需在系统设置中允许「自启动 + 后台高耗电」，否则切后台会被断流。
+- **调试入口**：设置页底部**版本号连点 10 下**解锁调试区（兼容开关与诊断工具）。
+- **已知限制**：AirPlay 视频/镜像的音量由接收端（Apple TV / Mac）控制，app 内音量滑块对其不生效（Apple 设计如此）；HLS 镜像存在约 2.5~3 秒固有延迟。
 
 ## 📄 授权 / License
 
