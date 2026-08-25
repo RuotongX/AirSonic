@@ -313,15 +313,16 @@ class HlsLiveServer(
             respond(out, 404, "Not Found", "text/plain", null, headOnly); return
         }
         val deadline = System.currentTimeMillis() + 3000
+        var data: ByteArray? = null
         synchronized(lock) {
             while (running) {
                 // 已发布分片的小片 / 开放分片的已关闭小片
                 published.firstOrNull { it.seq == seq }?.parts?.firstOrNull { it.idx == idx }?.let { p ->
-                    respond(out, 200, "OK", segContentType, p.data, headOnly); return
+                    data = p.data; return@synchronized
                 }
                 if (curSeq == seq) {
                     curParts.firstOrNull { it.idx == idx }?.let { p ->
-                        respond(out, 200, "OK", segContentType, p.data, headOnly); return
+                        data = p.data; return@synchronized
                     }
                     // 还未关闭（PRELOAD-HINT）：阻塞等它关闭
                     val wait = deadline - System.currentTimeMillis()
@@ -332,7 +333,10 @@ class HlsLiveServer(
                 break
             }
         }
-        respond(out, 404, "Not Found", "text/plain", null, headOnly)
+        // socket 写必须在锁外：客户端停读时持锁写会堵死全局 lock（编码管线冻结）
+        val d = data
+        if (d != null) respond(out, 200, "OK", segContentType, d, headOnly)
+        else respond(out, 404, "Not Found", "text/plain", null, headOnly)
     }
 
     private fun buildPlaylist(): String {

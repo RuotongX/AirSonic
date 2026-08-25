@@ -53,7 +53,7 @@ class ScreenMirrorCaster(
     private val onRawVideoFrame: ((data: ByteArray, ptsUs: Long, keyframe: Boolean) -> Unit)? = null,
     private val onRawAudioFrame: ((adtsFrame: ByteArray, ptsUs: Long) -> Unit)? = null,
 ) {
-    private var codec: MediaCodec? = null
+    @Volatile private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
     private var projection: MediaProjection? = null
     private val projectionCallback = object : MediaProjection.Callback() {}
@@ -173,7 +173,11 @@ class ScreenMirrorCaster(
                         val data = ByteArray(info.size)
                         buf.position(info.offset); buf.limit(info.offset + info.size)
                         buf.get(data)
-                        handleFrame(data, info)
+                        // handleFrame 内含 muxer/SPS 解析等可能抛异常的链路（尤其畸形输入），
+                        // 绝不能让它杀死 drain 线程——编码器无人消费 = 镜像无声冻屏
+                        try { handleFrame(data, info) } catch (t: Throwable) {
+                            onLog("handleFrame 异常已吞: ${t.javaClass.simpleName} ${t.message}")
+                        }
                     }
                     c.releaseOutputBuffer(idx, false)
                 }
@@ -214,7 +218,7 @@ class ScreenMirrorCaster(
     /** HLS 模式（有切片回调）pts 起点偏移；DLNA 裸流保持 0 起不动既有行为。 */
     private val hlsPtsOffsetUs = if (onSegmentBoundary != null) 1_000_000L else 0L
 
-    /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起，HLS 模式同样 +1s）。无音轨模式直接丢弃。 */
+    /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起，HLS 模式同样 +1s）。TS 音轨在无音轨模式丢弃；fMP4 旁路回调不受 withAudio 影响（由接收方自行丢弃）。 */
     fun writeAudioFrame(adtsFrame: ByteArray, ptsUs: Long) {
         if (withAudio) muxer.writeAudioFrame(adtsFrame, ptsUs + hlsPtsOffsetUs)
         onRawAudioFrame?.invoke(adtsFrame, ptsUs + hlsPtsOffsetUs)

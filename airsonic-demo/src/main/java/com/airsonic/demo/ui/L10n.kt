@@ -29,7 +29,6 @@ data class Strings(
     val soundOnly: String,
     val soundOnlyDesc: String,
     val soundInfo: String,           // 仅投声音 ⓘ 弹窗说明
-    val startMirror: String,
     val castVideo: String,
     val castAudio: String,
     val needMedia: String,
@@ -118,7 +117,7 @@ data class Strings(
     val mirrorNeedsDlna: String,    // 应用内投屏需选中 DLNA 设备
     val tvDisconnected: String,     // 接收端已断开/停止，投送结束
     val volumeUnsupported: String,  // 音量下发失败提示（设备不支持）
-    val bgKeepHint: String,         // 后台保活引导（点按跳系统设置）
+    val bgKeepHint: String,         // 保活说明文案（镜像页感叹号弹窗；跳转动作在 bgKeepAction 按钮）
     val bgKeepAction: String,       // 「设置保活」按钮（跳系统电池/自启动设置）
     val cleanedLastSession: String, // 冷启动清理上次投送残留
     val httpStreamTitle: String,    // HTTP 流输出（AirMusic 式直播地址）
@@ -138,7 +137,6 @@ private val ZH = Strings(
     sound = "声音", soundOnly = "仅投声音",
     soundOnlyDesc = "实时把系统声音投到所选音箱（AirPlay/Sonos）",
     soundInfo = "捕获系统音频，实时投到所选音箱（AirPlay/Sonos）。只投声音、不含画面；要投画面请用上方「投画面」的应用内投屏。",
-    startMirror = "开始投声音",
     castVideo = "投射视频", castAudio = "投射音频",
     needMedia = "需要访问本机媒体", grantDesc = "授权后即可浏览并投送文件", grant = "授权访问",
     noVideo = "未找到视频文件", noAudio = "未找到音频文件",
@@ -213,7 +211,6 @@ private val EN = Strings(
     sound = "Sound", soundOnly = "Sound only",
     soundOnlyDesc = "Live-cast system audio to the chosen speaker (AirPlay/Sonos)",
     soundInfo = "Captures system audio and casts it live to the chosen speaker (AirPlay/Sonos). Sound only, no screen — for screen use the in-app \"Mirror screen\" above.",
-    startMirror = "Start sound cast",
     castVideo = "Cast video", castAudio = "Cast audio",
     needMedia = "Media access needed", grantDesc = "Grant access to browse and cast files", grant = "Grant access",
     noVideo = "No video files", noAudio = "No audio files",

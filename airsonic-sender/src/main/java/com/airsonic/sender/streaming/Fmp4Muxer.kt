@@ -98,7 +98,7 @@ class Fmp4Muxer(
         val hdrLen = if (protectionAbsent == 1) 7 else 9
         val frameLen = ((adtsFrame[3].toInt() and 3) shl 11) or
             ((adtsFrame[4].toInt() and 0xFF) shl 3) or ((adtsFrame[5].toInt() ushr 5) and 7)
-        if (frameLen < hdrLen || frameLen > adtsFrame.size) return
+        if (frameLen <= hdrLen || frameLen > adtsFrame.size) return
         if (audioAsc == null) {
             val profile = ((adtsFrame[2].toInt() ushr 6) and 3) + 1   // ADTS profile → objectType
             val freqIdx = (adtsFrame[2].toInt() ushr 2) and 0xF
