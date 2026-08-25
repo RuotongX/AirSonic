@@ -54,18 +54,19 @@ class CaptureProjectionService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val en = com.airsonic.demo.ui.L10n.lang.value == com.airsonic.demo.ui.Lang.EN
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "AirSonic 捕获",
+                if (en) "AirSonic Capture" else "AirSonic 捕获",
                 NotificationManager.IMPORTANCE_LOW
             )
             nm.createNotificationChannel(channel)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AirSonic 投送中")
-            .setContentText("正在向接收设备实时投送，勿清后台")
+            .setContentTitle(if (en) "AirSonic casting" else "AirSonic 投送中")
+            .setContentText(if (en) "Streaming to your receiver — keep the app alive" else "正在向接收设备实时投送，勿清后台")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()

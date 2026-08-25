@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -91,6 +92,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -219,13 +221,18 @@ fun MainScreen(nav: NavHostController) {
             // 顶部：设备选择 + 设置
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(
-                    Modifier.glass(radius = 22).clickable { showDevices = true }
+                    Modifier.weight(1f, fill = false)   // 长设备名不许挤掉设置按钮
+                        .glass(radius = 22).clickable { showDevices = true }
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(Icons.Rounded.Cast, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(selected?.let { DevicePrefs.displayName(ctx, it) } ?: s.selectDevice, color = Aurora.TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        selected?.let { DevicePrefs.displayName(ctx, it) } ?: s.selectDevice,
+                        color = Aurora.TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.Rounded.ExpandMore, null, tint = Aurora.TextSecondary, modifier = Modifier.size(20.dp))
                 }
@@ -272,8 +279,9 @@ fun MainScreen(nav: NavHostController) {
 @Composable
 private fun MirrorHeroCard(animated: Boolean, onClick: () -> Unit) {
     // 用 Row + weight 给文字预留独立宽度，标识用固定宽度——避免长副标题跑到标识下方重合。
+    // 高度自适应（min 150）：英文文案比中文长，定高会把换行后的副标题裁掉。
     Row(
-        Modifier.fillMaxWidth().height(150.dp)
+        Modifier.fillMaxWidth().heightIn(min = 150.dp)
             .shadow(16.dp, RoundedCornerShape(28.dp), clip = false,
                 ambientColor = Aurora.Magenta.copy(alpha = 0.5f), spotColor = Aurora.Cyan.copy(alpha = 0.5f))
             .background(Aurora.brandBrush, RoundedCornerShape(28.dp))
@@ -377,7 +385,7 @@ private fun MediaRow(item: MediaLibrary.Item, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(item.name, color = Aurora.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(item.name, color = Aurora.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 buildString {
                     append(item.durationText)

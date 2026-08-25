@@ -32,6 +32,9 @@ object MediaLibrary {
         val resText: String get() = if (width > 0 && height > 0) "${width}x${height}" else ""
     }
 
+    /** 文件名为空时的占位（跟随界面语言）。 */
+    private fun unknownName(): String = if (L10n.lang.value == Lang.EN) "Unknown" else "未知"
+
     fun queryAudio(context: Context): List<Item> {
         val out = ArrayList<Item>()
         val col = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
@@ -47,7 +50,7 @@ object MediaLibrary {
             val durC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             while (c.moveToNext()) {
                 val id = c.getLong(idC)
-                out.add(Item(ContentUris.withAppendedId(col, id), c.getString(nameC) ?: "未知", c.getLong(durC), isVideo = false))
+                out.add(Item(ContentUris.withAppendedId(col, id), c.getString(nameC) ?: unknownName(), c.getLong(durC), isVideo = false))
             }
         }
         return out
@@ -71,7 +74,7 @@ object MediaLibrary {
             val hC = c.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT)
             while (c.moveToNext()) {
                 val id = c.getLong(idC)
-                out.add(Item(ContentUris.withAppendedId(col, id), c.getString(nameC) ?: "未知",
+                out.add(Item(ContentUris.withAppendedId(col, id), c.getString(nameC) ?: unknownName(),
                     c.getLong(durC), c.getInt(wC), c.getInt(hC), isVideo = true))
             }
         }

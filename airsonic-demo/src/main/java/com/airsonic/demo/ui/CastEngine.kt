@@ -636,7 +636,7 @@ object CastEngine {
             }
             // 提前暴露路由诊断：setUri 若超时也能看出控制端点/本机流地址是否合理（多网卡选错等）
             val ctlHost = controlUrl.removePrefix("http://").substringBefore("/")
-            activeCodec.value = "${if (wav) "WAV" else "AAC"}｜投…｜ctl=$ctlHost｜流=$localIp:$port"
+            activeCodec.value = "${if (wav) "WAV" else "AAC"}｜…｜ctl=$ctlHost｜$localIp:$port"
             if (!c.setUri(castUri, didl)) { fail("${L10n.s.castError}${c.lastError}", gen); return }
             // 关键：Sonos 对电台流 Play 会先连流、等首个音频帧确认格式才返回。
             // 若 play 在推流之前发、流是空的，Play 必然等到 SOAP 超时。
@@ -666,7 +666,7 @@ object CastEngine {
             // 绝不能插在捕获热循环里（AudioRecord 缓冲仅几百毫秒，卡一次就 overrun 爆音/断流）。
             thread(isDaemon = true, name = "airsonic-sonos-diag") {
                 while (casting && gen == sessionGen && dlnaCtl === c) {
-                    activeCodec.value = "$fmtLabel｜S:${c.getTransportInfo() ?: "?"}｜流x${server.connections}｜$localIp:$port"
+                    activeCodec.value = "$fmtLabel｜S:${c.getTransportInfo() ?: "?"}｜c=${server.connections}｜$localIp:$port"
                     runCatching { Thread.sleep(3000) }
                 }
             }
@@ -776,7 +776,7 @@ object CastEngine {
                 }
                 // 等编码器产出 SPS/PPS（首帧配置），最多 2s
                 var wr = 0; while (!c.ready && wr < 2000) { delay(50); wr += 50 }
-                if (!c.ready) { fail("${L10n.s.setupFail}: 编码器无输出", gen); return@launch }
+                if (!c.ready) { fail("${L10n.s.setupFail}: no encoder output", gen); return@launch }
                 // 声画同投：复用同一 MediaProjection 起 AudioPlaybackCapture → AAC → TS 音轨。
                 // 捕获失败（目标 App 禁录/ROM 限制）不致命：降级纯画面，状态行能看到「无音轨」。
                 var audioOn = false
@@ -830,17 +830,17 @@ object CastEngine {
                             }
                         }
                     }
-                    activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay 投…｜流=$localIp:$port"
+                    activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay …｜$localIp:$port"
                     // 等切片器攒够 2 个分片（0.5s 分片 → ≈1s）：AVPlayer 起手要求窗口里有几片可播
                     var sw = 0
                     while ((hls?.closedSegments ?: 0) < 2 && sw < 10_000) { delay(100); sw += 100 }
-                    if ((hls?.closedSegments ?: 0) < 1) { fail("${L10n.s.setupFail}: 编码无分片", gen); return@launch }
+                    if ((hls?.closedSegments ?: 0) < 1) { fail("${L10n.s.setupFail}: no segment", gen); return@launch }
                     if (!withContext(Dispatchers.IO) { vc.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
                     if (!isActive || !casting || gen != sessionGen) return@launch
                     onCastingStarted(device.name)
                     while (isActive && casting && gen == sessionGen) {
                         delay(3000)
-                        activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay｜片${hls?.closedSegments}｜单x${hls?.playlistHits}"
+                        activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay｜seg=${hls?.closedSegments}｜pl=${hls?.playlistHits}"
                     }
                 } else {
                 val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true,
@@ -850,7 +850,7 @@ object CastEngine {
                 device.renderingControlUrl?.let {
                     bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
                 }
-                activeCodec.value = "$fmtLabel ${w}x${h}｜投…｜流=$localIp:$port"
+                activeCodec.value = "$fmtLabel ${w}x${h}｜…｜$localIp:$port"
                 delay(500)   // 让编码流先产数据，渲染器一连即有内容（Sonos 同款时序经验）
                 if (!withContext(Dispatchers.IO) { dc.setUri(url, didl) }) {
                     fail("${L10n.s.castError}${dc.lastError}", gen); return@launch
@@ -868,7 +868,7 @@ object CastEngine {
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
-                    activeCodec.value = "$fmtLabel ${w}x${h}｜S:${st ?: "?"}｜流x${srv!!.connections}｜丢${srv!!.drops}"
+                    activeCodec.value = "$fmtLabel ${w}x${h}｜S:${st ?: "?"}｜c=${srv!!.connections}｜drop=${srv!!.drops}"
                     if (srv!!.connections > 0) { hadSub = true; gonePolls = 0; continue }
                     val stopped = st == "STOPPED" || st == "NO_MEDIA_PRESENT"
                     gonePolls = if (hadSub || stopped) gonePolls + 1 else 0
