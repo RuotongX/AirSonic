@@ -699,6 +699,7 @@ object CastEngine {
             var caster: com.airsonic.sender.screen.ScreenMirrorCaster? = null
             var projection: android.media.projection.MediaProjection? = null
             var server: com.airsonic.sender.streaming.LiveAudioHttpServer? = null
+            var hlsServer: com.airsonic.sender.streaming.HlsLiveServer? = null
             var ctl: DlnaController? = null
             var avc: com.airsonic.sender.streaming.AirplayVideoController? = null
             var endMsg: String? = null   // 电视端断开时的收尾文案（优先级高于「已停止」）
@@ -711,13 +712,17 @@ object CastEngine {
                     val pm = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                     pm.getMediaProjection(resultCode, data)
                 }
-                // 无限长 TS 直播流（LiveAudioHttpServer 实为内容无关扇出：换 contentType 即可）
-                // 新观众接入即补关键帧；队列按视频量级给 8192 包（≈1.5MB，音频默认 256 远不够）
-                val srv = com.airsonic.sender.streaming.LiveAudioHttpServer(
+                // AirPlay 镜像走 HLS（AVPlayer 实测不吃无限长裸 TS：ffmpeg 产流/假大 Content-Length
+                // 两种形态都永远停 loading；HLS 是 AVPlayer 原生直播形态，秒开）。
+                // DLNA 渲染器继续走无限长 TS 直播流（新观众接入即补关键帧；队列 8192 包≈1.5MB）。
+                val hls = if (airplayVideo) com.airsonic.sender.streaming.HlsLiveServer(
+                    onLog = { android.util.Log.i("CastEngine", "mirror-hls: $it") }) else null
+                hlsServer = hls
+                val srv = if (airplayVideo) null else com.airsonic.sender.streaming.LiveAudioHttpServer(
                     contentType = "video/mp2t", pathExt = "ts", queueMax = 8192,
                     onSubscriber = { caster?.prepareCleanJoin() })
                 server = srv
-                val port = withContext(Dispatchers.IO) { srv.start() }
+                val port = withContext(Dispatchers.IO) { hls?.start() ?: srv!!.start() }
                 // 最长边压到 1920（1080p 级），保宽高比、偶数对齐（H.264 yuv420 要求偶数）
                 val m = app.resources.displayMetrics
                 val scale = minOf(1f, 1920f / maxOf(m.widthPixels, m.heightPixels))
@@ -730,8 +735,11 @@ object CastEngine {
                 val c = com.airsonic.sender.screen.ScreenMirrorCaster(
                     width = w, height = h, dpi = m.densityDpi, bitRate = 10_000_000,
                     withAudio = withAudio,
-                    emit = { pkt -> srv.push(pkt) },   // 丢包自愈(drop-until-IDR)在 caster 内部
+                    // HLS：包进切片缓冲（无下行队列拥塞，恒 true）；DLNA：裸 TS 扇出（丢包自愈在 caster 内）
+                    emit = if (hls != null) ({ pkt -> hls.acceptPacket(pkt); true })
+                           else ({ pkt -> srv!!.push(pkt) }),
                     onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
+                    onSegmentBoundary = if (hls != null) ({ pts -> hls.boundary(pts) }) else null,
                 )
                 caster = c
                 val proj = projection ?: run { fail(L10n.s.setupFail, gen); return@launch }
@@ -770,10 +778,11 @@ object CastEngine {
                 }
                 val localIp = localIpForTarget(device.host)
                     ?: run { fail("${L10n.s.castError}no ip", gen); return@launch }
-                val url = "http://$localIp:$port${srv.path}"
+                val url = "http://$localIp:$port${hls?.playlistPath ?: srv!!.path}"
                 val fmtLabel = "H.264${if (audioOn) "+AAC" else ""}/TS"
                 if (airplayVideo) {
-                    // AirPlay 镜像：同一个 TS 直播流经 play-queue 推给 Apple TV/Mac（AVPlayer 实测吃无限长 TS）
+                    // AirPlay 镜像：HLS 直播（m3u8+TS 分片）经 play-queue 推给 Apple TV/Mac。
+                    // 裸 TS 直播流已被实测判死刑（永远 loading），HLS 是 AVPlayer 原生直播形态。
                     val hs = withContext(Dispatchers.IO) { pairFor(app, device) }
                         ?: run { if (phase.value != CastPhase.ERROR) fail(L10n.s.pairFail, gen); return@launch }
                     val vc = com.airsonic.sender.streaming.AirplayVideoController(device.host, hs)
@@ -795,13 +804,16 @@ object CastEngine {
                         }
                     }
                     activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay 投…｜流=$localIp:$port"
-                    delay(500)   // 让编码流先产数据，接收端一连即有内容
+                    // 等切片器攒够 3 个分片（1s GOP → ≈3s）：AVPlayer 起手要求窗口里有几片可播
+                    var sw = 0
+                    while ((hls?.closedSegments ?: 0) < 3 && sw < 10_000) { delay(100); sw += 100 }
+                    if ((hls?.closedSegments ?: 0) < 1) { fail("${L10n.s.setupFail}: 编码无分片", gen); return@launch }
                     if (!withContext(Dispatchers.IO) { vc.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
                     if (!isActive || !casting || gen != sessionGen) return@launch
                     onCastingStarted(device.name)
                     while (isActive && casting && gen == sessionGen) {
                         delay(3000)
-                        activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay｜流x${srv.connections}｜丢${srv.drops}"
+                        activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay｜片${hls?.closedSegments}｜单x${hls?.playlistHits}"
                     }
                 } else {
                 val didl = buildDidl(device.name, url, "video/mp2t", isVideo = true,
@@ -829,8 +841,8 @@ object CastEngine {
                 while (isActive && casting && gen == sessionGen) {
                     delay(3000)
                     val st = withContext(Dispatchers.IO) { dc.getTransportInfo() }
-                    activeCodec.value = "$fmtLabel ${w}x${h}｜S:${st ?: "?"}｜流x${srv.connections}｜丢${srv.drops}"
-                    if (srv.connections > 0) { hadSub = true; gonePolls = 0; continue }
+                    activeCodec.value = "$fmtLabel ${w}x${h}｜S:${st ?: "?"}｜流x${srv!!.connections}｜丢${srv!!.drops}"
+                    if (srv!!.connections > 0) { hadSub = true; gonePolls = 0; continue }
                     val stopped = st == "STOPPED" || st == "NO_MEDIA_PRESENT"
                     gonePolls = if (hadSub || stopped) gonePolls + 1 else 0
                     if (gonePolls >= 4) { endMsg = L10n.s.tvDisconnected; break }
@@ -847,6 +859,7 @@ object CastEngine {
                     runCatching { caster?.stop() }
                     runCatching { projection?.stop() }   // 否则系统投屏指示常驻、干扰下次授权
                     runCatching { server?.stop() }
+                    runCatching { hlsServer?.stop() }
                     // SOAP Stop 是阻塞网络请求 → 切线程，别拖 UI 复位
                     ctl?.let { c2 -> thread(isDaemon = true, name = "airsonic-mirror-stop") { runCatching { c2.stop() } } }
                     if (dlnaCtl === ctl) dlnaCtl = null

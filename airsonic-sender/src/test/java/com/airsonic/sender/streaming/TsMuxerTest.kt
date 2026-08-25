@@ -122,9 +122,11 @@ class TsMuxerTest {
             pesPayload.write(pkt, p, 188 - p)
         }
         val pl = pesPayload.toByteArray()
-        assertTrue(pl.size >= sps.size + pps.size + 6)
-        assertTrue("SPS 在最前", pl.copyOfRange(0, sps.size).contentEquals(sps))
-        assertTrue("PPS 紧随其后", pl.copyOfRange(sps.size, sps.size + pps.size).contentEquals(pps))
+        // payload 布局：AUD(6B) → SPS → PPS → IDR（AUD 是 CoreMedia HLS 子流的样本边界锚点）
+        assertTrue(pl.size >= 6 + sps.size + pps.size + 6)
+        assertTrue("AUD 在最前", pl.copyOfRange(0, 6).contentEquals(byteArrayOf(0, 0, 0, 1, 0x09, 0xF0.toByte())))
+        assertTrue("SPS 紧随 AUD", pl.copyOfRange(6, 6 + sps.size).contentEquals(sps))
+        assertTrue("PPS 紧随其后", pl.copyOfRange(6 + sps.size, 6 + sps.size + pps.size).contentEquals(pps))
     }
 
     @Test

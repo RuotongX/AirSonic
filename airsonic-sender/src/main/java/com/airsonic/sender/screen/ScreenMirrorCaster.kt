@@ -33,6 +33,11 @@ class ScreenMirrorCaster(
     /** 发一个 TS 包到底层扇出；返回 false=发生了丢弃（拥塞信号）。 */
     private val emit: (ByteArray) -> Boolean,
     private val onLog: (String) -> Unit = { Log.i("ScreenMirror", it) },
+    /**
+     * HLS 模式：每个关键帧写出前回调（参数=归零 pts 微秒），供切片器在此关闭/新开分片。
+     * 非 null 时每个关键帧前强制重发 PAT/SDT/PMT（HLS 每个分片必须以节目表起手）。
+     */
+    private val onSegmentBoundary: ((Long) -> Unit)? = null,
 ) {
     private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
@@ -161,18 +166,27 @@ class ScreenMirrorCaster(
         }
         val keyframe = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         if (keyframe) { inKeyframe = true; droppedInFrame = false }
-        // pts 归零对齐：视频编码器给的是 nanoTime 系大数，音轨 pts 从 0 起——同基才能声画同步
-        if (ptsBase < 0) ptsBase = info.presentationTimeUs
-        muxer.writeVideoFrame(data, info.presentationTimeUs - ptsBase, keyframe)
+        // pts 归零对齐：视频编码器给的是 nanoTime 系大数，音轨 pts 从 0 起——同基才能声画同步。
+        // HLS 模式整体 +1s：对齐 ffmpeg 首 PCR≈0.7s 的惯例（0 起播在 CoreMedia 下有拒产样本风险）。
+        if (ptsBase < 0) ptsBase = info.presentationTimeUs - hlsPtsOffsetUs
+        val relPts = info.presentationTimeUs - ptsBase
+        if (keyframe && onSegmentBoundary != null) {
+            muxer.forcePatPmt()              // HLS：每片起手 PAT/SDT/PMT → SPS/PPS → IDR
+            onSegmentBoundary.invoke(relPts)
+        }
+        muxer.writeVideoFrame(data, relPts, keyframe)
         if (keyframe) {
             inKeyframe = false
             if (!droppedInFrame) gating = false   // 本关键帧完整发出 → 拥塞恢复完成
         }
     }
 
-    /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起）。无音轨模式直接丢弃。 */
+    /** HLS 模式（有切片回调）pts 起点偏移；DLNA 裸流保持 0 起不动既有行为。 */
+    private val hlsPtsOffsetUs = if (onSegmentBoundary != null) 1_000_000L else 0L
+
+    /** 喂一帧 AAC（带 ADTS 头）；ptsUs 与视频同基（0 起，HLS 模式同样 +1s）。无音轨模式直接丢弃。 */
     fun writeAudioFrame(adtsFrame: ByteArray, ptsUs: Long) {
-        if (withAudio) muxer.writeAudioFrame(adtsFrame, ptsUs)
+        if (withAudio) muxer.writeAudioFrame(adtsFrame, ptsUs + hlsPtsOffsetUs)
     }
 
     /** 让编码器立刻产一个关键帧（新观众接入/传输丢包时用，把花屏窗口压到最短）。 */

@@ -48,10 +48,12 @@ class TsMuxer(
     fun writeVideoFrame(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
         val pts90 = usTo90k(ptsUs)
         maybePatPmt()
+        // AUD（访问单元分隔符）每帧前置，对齐 ffmpeg：CoreMedia 的 HLS 子流解析器靠 AUD 界定
+        // 样本边界，没有 AUD 时分片里产不出视频样本（VOD 路径宽容，HLS 路径硬性要求，实测）
         val payload = if (keyframe) {
             val s = sps; val p = pps
-            if (s != null && p != null) s + p + data else data
-        } else data
+            if (s != null && p != null) AUD + s + p + data else AUD + data
+        } else AUD + data
         writePes(videoPid, streamId = 0xE0, payload = payload, pts90 = pts90, withPcr = true)
     }
 
@@ -248,6 +250,9 @@ class TsMuxer(
     private fun usTo90k(us: Long): Long = us * 9 / 100  // 90kHz：1s=90000 ticks；会话时长级 Long 不溢出
 
     companion object {
+        /** Access Unit Delimiter（primary_pic_type=0 + rbsp trailing），与 ffmpeg 产出的 AUD 逐字节一致。 */
+        private val AUD = byteArrayOf(0, 0, 0, 1, 0x09, 0xF0.toByte())
+
         private fun put16(b: ByteArray, off: Int, v: Int) {
             b[off] = (v ushr 8).toByte(); b[off + 1] = v.toByte()
         }
