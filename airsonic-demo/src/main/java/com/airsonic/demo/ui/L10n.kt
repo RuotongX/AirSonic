@@ -119,6 +119,7 @@ data class Strings(
     val tvDisconnected: String,     // 接收端已断开/停止，投送结束
     val volumeUnsupported: String,  // 音量下发失败提示（设备不支持）
     val bgKeepHint: String,         // 后台保活引导（点按跳系统设置）
+    val bgKeepAction: String,       // 「设置保活」按钮（跳系统电池/自启动设置）
     val cleanedLastSession: String, // 冷启动清理上次投送残留
     val httpStreamTitle: String,    // HTTP 流输出（AirMusic 式直播地址）
     val httpStreamSub: String,      // 复制地址，任意播放器可收听
@@ -192,7 +193,8 @@ private val ZH = Strings(
     mirrorNeedsDlna = "应用内投屏需先在首页选中投送设备",
     tvDisconnected = "接收端已断开，投送结束",
     volumeUnsupported = "音量控制未送达：该设备可能不支持，请用电视遥控器",
-    bgKeepHint = "切后台断流？点我跳系统设置，允许本应用自启动与后台运行",
+    bgKeepHint = "切后台断流？多为系统省电限制。点「设置保活」跳系统设置，允许本应用自启动与后台运行（部分机型还需开「后台高耗电」）",
+    bgKeepAction = "设置保活",
     cleanedLastSession = "检测到上次投送未正常结束，已通知电视停止",
     httpStreamTitle = "HTTP 流输出",
     httpStreamSub = "生成直播地址，VLC/浏览器/任意播放器均可收听",
@@ -266,7 +268,8 @@ private val EN = Strings(
     mirrorNeedsDlna = "In-app casting needs a target device selected on Home",
     tvDisconnected = "Receiver disconnected — cast ended",
     volumeUnsupported = "Volume command not accepted by this device — use the TV remote",
-    bgKeepHint = "Drops when backgrounded? Tap to allow auto-start & background run in system settings",
+    bgKeepHint = "Drops when backgrounded? Usually the system's battery saver. Tap \"Keep-alive settings\" to allow auto-start & background run (some ROMs also need \"high background power\")",
+    bgKeepAction = "Keep-alive settings",
     cleanedLastSession = "Previous cast did not end cleanly — stop sent to the TV",
     httpStreamTitle = "HTTP stream out",
     httpStreamSub = "Get a live URL — VLC, browsers or any player can tune in",

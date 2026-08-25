@@ -623,9 +623,7 @@ private fun CastZone() {
 // ============ 屏幕镜像（音频优先） ============
 @Composable
 fun MirrorScreen(nav: NavHostController, actions: CastActions) {
-    var soundOn by remember { mutableStateOf(true) }   // 声音默认已选中
     var infoDialog by remember { mutableStateOf<String?>(null) }
-    val phase by CastEngine.phase
     val s = L10n.s
     val ctx = LocalContext.current
     ScreenScaffold(nav, s.mirrorTitle) {
@@ -652,9 +650,10 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
         Spacer(Modifier.height(20.dp))
         SectionTitleInfo(s.sound) { infoDialog = s.soundInfo }
         Spacer(Modifier.height(8.dp))
+        // 仅投声音：与「投画面」一致，点卡片直接进入投声音逻辑（系统音频→所选音箱）
         Row(
             Modifier.fillMaxWidth().glass(radius = 16)
-                .clickable { soundOn = !soundOn }
+                .clickable { actions.requestSystemAudioCast() }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -662,15 +661,12 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
                 Text(s.soundOnly, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Text(s.soundOnlyDesc, color = Aurora.TextDim, fontSize = 12.sp)
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
             Box(
-                Modifier.size(28.dp)
-                    .background(if (soundOn) Aurora.Cyan else Color.Transparent, RoundedCornerShape(50))
-                    .border(1.5.dp, if (soundOn) Aurora.Cyan else Aurora.TextDim, RoundedCornerShape(50)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (soundOn) Text("✓", color = Color(0xFF00131A), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
+                Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) { Text(CastEngine.selected.value?.let { CastEngine.typeLabel(it) } ?: s.castDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+            Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(8.dp))
         // HTTP 流输出（AirMusic 式）：不选设备，生成直播地址给任意播放器
@@ -688,20 +684,22 @@ fun MirrorScreen(nav: NavHostController, actions: CastActions) {
             Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(24.dp))
-        if (phase != CastPhase.CASTING) {
-            PrimaryButton(s.startMirror, enabled = soundOn) { actions.requestSystemAudioCast() }
-        }
         CastZone()
         Spacer(Modifier.height(12.dp))
-        // 后台保活引导：切后台断流多半是 ROM 省电限制（vivo 需另开 自启动+后台高耗电）
-        Text(
-            s.bgKeepHint, color = Aurora.TextDim, fontSize = 12.sp,
-            modifier = Modifier
-                .clickable {
-                    runCatching { ctx.startActivity(Intent(SysSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-                }
-                .padding(vertical = 6.dp),
-        )
+        // 后台保活：按钮跳系统设置；小感叹号与上方一致，点开看完整说明
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                s.bgKeepAction, color = Aurora.Cyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable {
+                        runCatching { ctx.startActivity(Intent(SysSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                    }
+                    .padding(vertical = 6.dp),
+            )
+            IconButton(onClick = { infoDialog = s.bgKeepHint }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Rounded.Info, contentDescription = s.bgKeepAction, tint = Aurora.TextDim, modifier = Modifier.size(16.dp))
+            }
+        }
         infoDialog?.let { InfoDialog(it) { infoDialog = null } }
     }
 }
