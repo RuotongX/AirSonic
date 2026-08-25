@@ -38,6 +38,12 @@ class ScreenMirrorCaster(
      * 非 null 时每个关键帧前强制重发 PAT/SDT/PMT（HLS 每个分片必须以节目表起手）。
      */
     private val onSegmentBoundary: ((Long) -> Unit)? = null,
+    /**
+     * >0 时按该周期（毫秒）强制编码器产关键帧（HLS 降延迟用：分片边界只在关键帧上，
+     * 分片时长=关键帧间隔；0.5s 分片比 1s 分片让 AVPlayer 的直播缓冲量减半）。
+     * 0=不强制，用编码器自带 [iFrameIntervalSec] GOP（DLNA 裸流路径）。
+     */
+    private val syncFrameIntervalMs: Long = 0,
 ) {
     private var codec: MediaCodec? = null
     private var display: android.hardware.display.VirtualDisplay? = null
@@ -125,6 +131,20 @@ class ScreenMirrorCaster(
         }
         running = true
         drainThread = thread(isDaemon = true, name = "airsonic-screen-drain") { drainLoop(c) }
+        if (syncFrameIntervalMs > 0) {
+            // HLS 降延迟：周期强制关键帧 → 分片边界密度 = 该周期（独立于拥塞恢复的节流通道）
+            thread(isDaemon = true, name = "airsonic-sync-tick") {
+                while (running) {
+                    try { Thread.sleep(syncFrameIntervalMs) } catch (_: InterruptedException) { break }
+                    if (!running) break
+                    runCatching {
+                        codec?.setParameters(android.os.Bundle().apply {
+                            putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+                        })
+                    }
+                }
+            }
+        }
         onLog("录屏编码已启动 ${width}x${height}@${frameRate} bitrate=$bitRate")
         return true
     }

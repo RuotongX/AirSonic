@@ -716,6 +716,8 @@ object CastEngine {
                 // 两种形态都永远停 loading；HLS 是 AVPlayer 原生直播形态，秒开）。
                 // DLNA 渲染器继续走无限长 TS 直播流（新观众接入即补关键帧；队列 8192 包≈1.5MB）。
                 val hls = if (airplayVideo) com.airsonic.sender.streaming.HlsLiveServer(
+                    // HLS 模式 0.5s 强制关键帧 → 分片 ~0.5s；minSegment 须小于它（防超短片即可）
+                    minSegmentUs = 400_000,
                     onLog = { android.util.Log.i("CastEngine", "mirror-hls: $it") }) else null
                 hlsServer = hls
                 val srv = if (airplayVideo) null else com.airsonic.sender.streaming.LiveAudioHttpServer(
@@ -740,6 +742,8 @@ object CastEngine {
                            else ({ pkt -> srv!!.push(pkt) }),
                     onLog = { android.util.Log.i("CastEngine", "mirror: $it") },
                     onSegmentBoundary = if (hls != null) ({ pts -> hls.boundary(pts) }) else null,
+                    // HLS：0.5s 一个关键帧 → 分片 0.5s，AVPlayer 直播缓冲量减半（降延迟主力）
+                    syncFrameIntervalMs = if (hls != null) 500L else 0L,
                 )
                 caster = c
                 val proj = projection ?: run { fail(L10n.s.setupFail, gen); return@launch }
@@ -804,9 +808,9 @@ object CastEngine {
                         }
                     }
                     activeCodec.value = "$fmtLabel ${w}x${h}｜AirPlay 投…｜流=$localIp:$port"
-                    // 等切片器攒够 3 个分片（1s GOP → ≈3s）：AVPlayer 起手要求窗口里有几片可播
+                    // 等切片器攒够 2 个分片（0.5s 分片 → ≈1s）：AVPlayer 起手要求窗口里有几片可播
                     var sw = 0
-                    while ((hls?.closedSegments ?: 0) < 3 && sw < 10_000) { delay(100); sw += 100 }
+                    while ((hls?.closedSegments ?: 0) < 2 && sw < 10_000) { delay(100); sw += 100 }
                     if ((hls?.closedSegments ?: 0) < 1) { fail("${L10n.s.setupFail}: 编码无分片", gen); return@launch }
                     if (!withContext(Dispatchers.IO) { vc.play(url, 0.0) }) { fail(L10n.s.setupFail, gen); return@launch }
                     if (!isActive || !casting || gen != sessionGen) return@launch
