@@ -75,9 +75,13 @@ class HlsMirrorHarnessTest {
         // HLS_FEED=files：对照实验——不产自己的流，把 ffmpeg 的 hls/live*.ts 灌进同一个服务器，
         // 用于区分「服务器/播放列表行为」与「TS 字节」哪一侧不被 CoreMedia 接受。
         val hls = HlsLiveServer(onLog = { println(">>> HLS $it") },
+            lowLatency = System.getenv("HLS_LL") != "off",
+            llParts = System.getenv("HLS_LL_PARTS") != "off",
             baseId = if (System.getenv("HLS_FEED") == "verbatim") "debug" else
                 java.util.UUID.randomUUID().toString().replace("-", ""))
         val port = hls.start()
+        val feedT0 = System.currentTimeMillis()
+        fun lagTag() = "[产${"%.1f".format((System.currentTimeMillis() - feedT0) / 1000.0)}s]"
         val feeding = java.util.concurrent.atomic.AtomicBoolean(true)
         if (System.getenv("HLS_FEED") == "verbatim") {
             // 播放列表和分片都直接服务 ffmpeg 目录原文件（与 python 成功的服务逐字节一致）
@@ -160,8 +164,8 @@ class HlsMirrorHarnessTest {
                 // 全量事件打印（readyToPlay/playing 是判据）；状态快照只摘关键字段防刷屏
                 if (inner["type"] == "playbackState" && inner["params"] != null) {
                     val p = inner["params"] as? Map<*, *>
-                    println(">>> EVENT-DECODED: playbackState name=$name state=${p?.get("playbackState")} rate=${p?.get("rate")} pos=${p?.get("position")}")
-                } else println(">>> EVENT-DECODED: $inner")
+                    println(">>> EVENT-DECODED: ${lagTag()} playbackState name=$name state=${p?.get("playbackState")} rate=${p?.get("rate")} pos=${p?.get("position")}")
+                } else println(">>> EVENT-DECODED: ${lagTag()} $inner")
             }
         }
         val conn = ctl.connect()

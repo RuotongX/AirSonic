@@ -727,6 +727,10 @@ object CastEngine {
                 val hls = if (airplayVideo) com.airsonic.sender.streaming.HlsLiveServer(
                     // HLS 模式 0.5s 强制关键帧 → 分片 ~0.5s；minSegment 须小于它（防超短片即可）
                     minSegmentUs = 400_000,
+                    // LL-HLS 实测：CoreMedia 拒收 TS 容器上的 EXT-X-PART（永远 loading，err=-12753），
+                    // 小片大概率要 fMP4 才行；但 SERVER-CONTROL+PART-INF 可安全开启——
+                    // AVPlayer 会进阻塞刷新（_HLS_msn 长轮询）+ LL 带宽预测，抖动链路明显改善。
+                    lowLatency = true, llParts = false,
                     onLog = { android.util.Log.i("CastEngine", "mirror-hls: $it") }) else null
                 hlsServer = hls
                 val srv = if (airplayVideo) null else com.airsonic.sender.streaming.LiveAudioHttpServer(
