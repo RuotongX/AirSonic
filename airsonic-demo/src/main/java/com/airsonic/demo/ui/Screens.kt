@@ -219,9 +219,13 @@ fun MainScreen(nav: NavHostController) {
                 .padding(horizontal = 20.dp).padding(top = 20.dp, bottom = 24.dp)
         ) {
             // 顶部：设备选择 + 设置
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 Row(
-                    Modifier.weight(1f, fill = false)   // 长设备名不许挤掉设置按钮
+                    Modifier.weight(1f, fill = false)   // 胶囊按内容取宽、上限为剩余宽度：短文案不缩，长设备名省略
                         .glass(radius = 22).clickable { showDevices = true }
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -236,7 +240,6 @@ fun MainScreen(nav: NavHostController) {
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.Rounded.ExpandMore, null, tint = Aurora.TextSecondary, modifier = Modifier.size(20.dp))
                 }
-                Spacer(Modifier.weight(1f))
                 Box(
                     Modifier.size(44.dp).glass(radius = 22).clickable { nav.navigate("settings") },
                     contentAlignment = Alignment.Center,
