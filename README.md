@@ -1,8 +1,18 @@
-# AirSonic
+# AirSonic（魔改精简版）
 
 > A from-scratch Android casting app — sends audio & video to **AirPlay** (HomePod, Apple TV, AirPlay speakers) **and DLNA/UPnP** receivers (smart TVs, boxes, Kodi). No commercial SDK.
 
-AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链路 —— **AirPlay**（设备发现 / HomeKit-AirPlay2 配对 / 加密音频流）与 **DLNA/UPnP**（SSDP 发现 / SOAP 控制），配上一套「深空极光 / Aurora」风格的 Jetpack Compose 界面。
+AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链路 —— **AirPlay**（设备发现 / HomeKit-AirPlay2 配对 / 加密音频流）与 **DLNA/UPnP**（SSDP 发现 / SOAP 控制）。
+
+> ## 🍴 本仓库说明（Fork / 魔改版）
+>
+> 本仓库是 **Ruotong Xu（GitHub: [RuotongX](https://github.com/RuotongX)）** 基于 [chunguangwei/AirSonic](https://github.com/chunguangwei/AirSonic) 的 **fork 魔改版**，用途为**个人日常使用**：
+>
+> - **主旨：精简** —— 去掉用不到的仪式感与品牌痕迹，保留核心投送能力；
+> - 界面改为**扁平极简深色主题**，直入主界面；
+> - 新增**「初始音量」设置**并修复音量相关两个问题（见下方「魔改清单」）；
+> - 上游功能（AirPlay 音频/视频/镜像、DLNA 投送、系统声音镜像、频谱等）完整保留；
+> - 许可证与上游一致：[PolyForm Noncommercial License 1.0.0](LICENSE)（© 2026 Chunguang Wei），魔改部分版权归 Ruotong Xu 所有，同样仅限非商业用途。
 
 ## ✨ 功能
 
@@ -11,10 +21,10 @@ AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链�
 - **AirPlay 视频**：向 **Apple TV / Mac** 投送本地视频文件（play-queue 通道，支持播放/暂停/进度同步，手机与接收端双向同步）。
 - **AirPlay 屏幕镜像**：整屏实时镜像到 **Apple TV / Mac**——录屏 H.264(+AAC) → MPEG-TS → **手机端 HLS 直播**（m3u8 + TS 分片，0.5s 分片），端到端延迟：良好网络约 3.5~4 秒，弱网/热点约 7 秒（LL-HLS 阻塞刷新已启用）。
 - **AirPlay 配对**：支持 TV 屏幕显示 PIN 码的配对流程（pair-setup M1–M6），配对凭据本地持久化，二次连接免密（pair-verify）。
-- **系统音频镜像**：捕获手机系统声音（任意 app / 网页）实时投到所选音箱 —— AirPlay 走 RAOP、**Sonos 走 UPnP 实时音频流**（「手机镜像」→「投声音」）。
-- **DLNA 屏幕镜像**：**应用内投屏（自研）**——录屏 H.264 → 自研 MPEG-TS 封包 → DLNA 实时流推送，坚果 N1S 4K 等 DLNA 投影/电视可用（延迟约 1~3 秒）。
+- **系统音频镜像**：捕获手机系统声音（任意 app / 网页）实时投到所选音箱 —— AirPlay 走 RAOP、DLNA 走 UPnP 实时音频流（「手机镜像」→「投声音」）。
+- **DLNA 屏幕镜像**：**应用内投屏（自研）**——录屏 H.264 → 自研 MPEG-TS 封包 → DLNA 实时流推送（延迟约 1~3 秒）。
 - **DLNA 视频 + 音频**：向智能电视 / 盒子 / Kodi 等 MediaRenderer 投送本地视频/音频，支持播放/暂停/拖动/停止 + 进度（AVTransport SOAP）。
-- **HTTP 流输出**：不选设备也能投——系统声音编码后直接在局域网开直播 URL，VLC/浏览器/任意播放器可听（AirMusic 式）。
+- **HTTP 流输出**：不选设备也能投——系统声音编码后直接在局域网开直播 URL，VLC/浏览器/任意播放器可听。
 - **实时频谱**：投送页跟着音乐跳动的 FFT 频谱条（纯 Kotlin Cooley-Tukey，无依赖）。
 - **设备发现**：mDNS（AirPlay `_airplay._tcp`）+ SSDP（DLNA `MediaRenderer`）实时发现局域网设备。
 - **设备管理**：每台设备可重命名、永久隐藏 / 取消隐藏（本地持久化）。
@@ -23,6 +33,27 @@ AirSonic 是一个纯自研的 Android 投送 app：自己实现两条投送链�
 - **应用内更新**：设置页「检查更新」直接从 GitHub Releases 拉取新版并安装（见下）。
 
 > **安全**：DLNA 设备描述 / controlUrl / LOCATION 均来自未信任的局域网设备，已做统一防护 —— 仅 http(s)+RFC1918 内网地址、解析一次钉死 IP（防 SSRF / DNS rebinding）、限读 512KB（防 DoS）、解析禁 DOCTYPE（防 XXE）。
+
+## 🔧 魔改清单（相对上游 chunguangwei/AirSonic）
+
+> 本 fork 的全部改动；按「精简 / 新增与修复」分类，与上游逐版对比而来。
+
+### ✂️ 精简（删）
+
+1. **移除开屏页**：上游的 6 秒开屏倒计时（SplashScreen）整体删除，启动直入主界面。
+2. **主题精简**：UI 从「深空极光 / Aurora」（渐变、玻璃拟态、流光动画）改为**扁平极简深色主题**，去掉动画依赖（`Aurora.kt` 重写，仅保留配色取色）。界面信息密度与触达路径不变，观感更安静。
+3. **全站文案去品牌化**：不再出现 Sonos、坚果 N1S 等具体品牌字样 —— 首页 / 仅投声音 / 弹窗说明 / 调试入口说明 / 通知与诊断串，中英文同步统一为「AirPlay / DLNA」。（README 同步清理）
+
+### ➕ 新增
+
+4. **「初始音量」设置**：设置页新增滑块（默认 **35%**），投送建立时作为会话初始音量。
+
+### 🔧 修复
+
+5. **初始音量真实生效**（上游缺陷）：上游 AirPlay 路径读不到设备音量时仅“显示”默认音量、从不下发，设备会静默沿用上次音量（如 50%）。本 fork：连接时**无条件下发**用户设定的初始音量，并在**流开始（RECORD）后重发一次**（AirPlay 2 设备在 RECORD 前会忽略 SET_PARAMETER volume）。
+6. **音量滑块不跟手**（上游缺陷）：上游「初始音量」用普通变量存储，拖动滑块不触发 Compose 重组，松手后要刷新页面才更新显示。本 fork 改为 Compose 可观察状态（`mutableStateOf`），拖动实时跟手。
+7. **设备胶囊 SpaceBetween 布局**：设备选择胶囊改用 SpaceBetween 权重布局，修复英文「Select device」被均分截断的问题（v1.0.0）。
+8. **英文 UI 全量走查**：hero 卡自适应高度、设备名省略号截断、通知与诊断串无中文残留（v0.9.1）。
 
 ## 🧱 工程结构
 
@@ -38,7 +69,7 @@ AirSonic/
 │       └── streaming/   # RTP 音频、加密通道、AirplayVideoController（play-queue 视频会话）、
 │                        # HlsLiveServer（HLS 直播切片）、TsMuxer（MPEG-TS 封包）、
 │                        # 系统音频实时流、FFT 频谱、LocalMediaHttpServer
-└── airsonic-demo/     # 产品 app（Compose / Aurora UI）
+└── airsonic-demo/     # 产品 app（Compose / 扁平极简主题）
     └── src/main/java/com/airsonic/demo/ui/
         ├── StudioActivity   # 入口
         ├── Screens.kt       # 主页 / 媒体 / 设置等界面
@@ -81,6 +112,8 @@ git push origin v0.2.0
 
 APK 输出：`airsonic-demo/build/outputs/apk/`。
 
+> 💡 Windows 下若工程路径含非 ASCII 字符（如中文目录），`gradle.properties` 已含 `android.overridePathCheck=true`。
+
 ## 🧩 环境
 
 | 项 | 版本 |
@@ -97,17 +130,17 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 | 协议 | 设备 | 内容 |
 |------|------|------|
 | AirPlay / AirPlay 2 | **Apple TV、Mac** | 本地视频（play-queue，双向进度同步）+ **整屏镜像**（HLS 直播，好网约 3.5~4 秒）+ 音频 |
-| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱 | 音频（本地文件 + 系统音频镜像，ALAC/PCM 自动选择） |
+| AirPlay / AirPlay 2 | HomePod、AirPlay 音箱 | 音频（本地文件 + 系统音频镜像，ALAC/PCM 自动选择，**初始音量可设**） |
 | UPnP 实时流 | Sonos | 系统音频镜像（WAV 实时流兜底） |
-| DLNA / UPnP | 智能电视、电视盒子、Kodi、坚果投影（N1S 4K 实测）、PC 软渲染器 | 本地视频 + 音频 |
-| **DLNA 实时屏幕流（自研）** | 坚果 N1S 4K 等支持 `video/mp2t` 的 DLNA 渲染器 | **应用内整屏镜像**：录屏 H.264 → MPEG-TS 实时流推送（延迟约 1~3 秒） |
+| DLNA / UPnP | 智能电视、电视盒子、Kodi、投影、PC 软渲染器 | 本地视频 + 音频 |
+| **DLNA 实时屏幕流（自研）** | 支持 `video/mp2t` 的 DLNA 渲染器 | **应用内整屏镜像**：录屏 H.264 → MPEG-TS 实时流推送（延迟约 1~3 秒） |
 
 ## 🚀 使用要点
 
 - **同一局域网**：手机与接收设备须在同一 Wi-Fi（部分路由器开启了 AP 隔离会导致发现不到设备）。
 - **AirPlay 首次配对**：投 Apple TV / Mac 时 TV 屏幕会显示 4 位 PIN 码，在 app 弹窗中输入即可；凭据本机保存，之后免密。
 - **录屏/录音权限**：屏幕镜像需授予录屏权限；声画同投还需录音权限（拒绝则降级为纯画面）。
-- **后台保活**：投送期间请保持 app 在前台；部分 ROM（如 vivo）需在系统设置中允许「自启动 + 后台高耗电」，否则切后台会被断流。
+- **后台保活**：投送期间请保持 app 在前台；部分 ROM需在系统设置中允许「自启动 + 后台高耗电」，否则切后台会被断流。
 - **调试入口**：设置页底部**版本号连点 10 下**解锁调试区（兼容开关与诊断工具）。
 - **已知限制**：AirPlay 视频/镜像的音量由接收端（Apple TV / Mac）控制，app 内音量滑块对其不生效（Apple 设计如此）；AirPlay 镜像存在约 3.5~4 秒（好网）/ 7 秒（热点）的固有延迟——Apple 规定低延迟小片只在 HTTP/2+TLS+ECN/SACK 链路启用，局域网裸 HTTP 无法满足，该延迟已为此路线的物理极限。
 
@@ -118,7 +151,8 @@ APK 输出：`airsonic-demo/build/outputs/apk/`。
 - ✅ **个人 / 学习 / 研究 / 业余 / 非营利 / 教育 / 政府**等任何**非商业**用途——**免费授权**。
 - ⛔ **任何商业用途，须事先获得作者书面同意**（单独的商业许可）。
 
-> **商用请先联系作者获取授权：chunguangwee@gmail.com**
+> **版权**：上游 © 2026 Chunguang Wei（[chunguangwei/AirSonic](https://github.com/chunguangwei/AirSonic)）；本 fork 魔改部分 © 2026 Ruotong Xu（[RuotongX/AirSonic](https://github.com/RuotongX/AirSonic)）。
+> **商用请先联系上游作者获取授权：chunguangwee@gmail.com**
 > Commercial use requires the author's prior written consent — contact **chunguangwee@gmail.com**.
 
 完整条款见 [`LICENSE`](LICENSE)。

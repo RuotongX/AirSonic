@@ -2,6 +2,8 @@
 
 **生效日期：2026-06-10　·　适用：AirSonic（Android）**
 
+> **本版本说明**：本应用为 **RuotongX 魔改版**（fork 自 [chunguangwei/AirSonic](https://github.com/chunguangwei/AirSonic)，魔改者：Ruotong Xu）。上游版权归 Chunguang Wei 所有，魔改部分版权归 Ruotong Xu 所有；本 fork 与上游同样适用 **PolyForm Noncommercial License 1.0.0**，仅限非商业用途。魔改不影响下述隐私承诺——本版本同样**没有服务器、不收集、不上传任何个人数据**。
+
 > English summary follows the Chinese text below.
 
 AirSonic 是一款在本地局域网内把音频 / 视频投送到接收设备（AirPlay / DLNA / Sonos 等）的工具类应用。我们把隐私保护作为首要原则：**AirSonic 没有服务器，不收集、不上传、不出售你的任何个人数据。**

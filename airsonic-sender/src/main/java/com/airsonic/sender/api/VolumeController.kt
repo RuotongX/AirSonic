@@ -28,9 +28,11 @@ fun pctToAirplayDb(pct: Int): Double =
 class AirplayVolumeController(private val session: AirplayStreamSession) : VolumeController {
     @Volatile private var lastPct: Int = 50
     override fun setVolume(pct: Int): Boolean {
-        if (pct > 0) lastPct = pct.coerceAtMost(100)
-        return session.setVolume(pctToAirplayDb(pct)) {}
-    }
+            if (pct > 0) lastPct = pct.coerceAtMost(100)
+            val ok = session.setVolume(pctToAirplayDb(pct)) {}
+            android.util.Log.i("AirsonicVol", "setVolume($pct) -> db=${"%.1f".format(pctToAirplayDb(pct))} ok=$ok")
+            return ok
+        }
     override fun getVolume(): Int? = null
     override fun setMute(muted: Boolean): Boolean =
         session.setVolume(if (muted) -144.0 else pctToAirplayDb(lastPct)) {}

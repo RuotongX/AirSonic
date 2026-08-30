@@ -151,63 +151,24 @@ fun PinDialogHost() {
 fun AppNav(actions: CastActions) {
     val nav = rememberNavController()
     Box(Modifier.fillMaxSize()) {
-        NavHost(navController = nav, startDestination = "splash") {
-            composable("splash") { SplashScreen { nav.navigate("main") { popUpTo("splash") { inclusive = true } } } }
-            composable("main") { MainScreen(nav) }
-            composable("mirror") { MirrorScreen(nav, actions) }
-            composable("audio") { MediaListScreen(nav, isVideo = false) }
-            composable("video") { MediaListScreen(nav, isVideo = true) }
+        NavHost(navController = nav, startDestination = "main") {
+            composable("main") { MainScreen(nav, actions) }
             composable("settings") { SettingsScreen(nav, actions) }
-            composable("protocols") { ProtocolsScreen(nav) }
-            composable("legal") { LegalScreen(nav) }
         }
         PinDialogHost()
     }
 }
 
-// ============ 开屏 ============
+// ============ 主页（镜像即主屏：投画面 / 仅投声音 / 音量）============
 @Composable
-fun SplashScreen(onDone: () -> Unit) {
-    var remain by remember { mutableStateOf(6) }
-    LaunchedEffect(Unit) {
-        while (remain > 0) { kotlinx.coroutines.delay(1000); remain-- }
-        onDone()
-    }
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            AirSonicLogo(modifier = Modifier.size(160.dp), animated = true)
-            Spacer(Modifier.height(20.dp))
-            Text("AirSonic", color = Aurora.TextPrimary, fontSize = 38.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
-            Text(L10n.s.tagline, color = Aurora.TextSecondary, fontSize = 14.sp)
-        }
-        // 跳过倒计时（右上角，可点立即跳过）
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(20.dp)
-                .glass(radius = 18)
-                .clickable { onDone() }
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            Text("${L10n.s.skip} ${remain}s", color = Aurora.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-// ============ 主页 ============
-@Composable
-fun MainScreen(nav: NavHostController) {
+fun MainScreen(nav: NavHostController, actions: CastActions) {
     val ctx = LocalContext.current
     LaunchedEffect(Unit) { CastEngine.startDiscovery(ctx) }
     var showDevices by remember { mutableStateOf(false) }
     val selected by CastEngine.selected
     val phase by CastEngine.phase
     val s = L10n.s
+    var infoDialog by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = showDevices) { showDevices = false }
 
@@ -247,15 +208,51 @@ fun MainScreen(nav: NavHostController) {
             }
 
             Spacer(Modifier.height(22.dp))
-            MirrorHeroCard(animated = phase == CastPhase.CASTING) { nav.navigate("mirror") }
-
-            Spacer(Modifier.height(26.dp))
-            SectionTitle(s.localMedia)
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                EntryCard(Icons.Rounded.Videocam, s.video, Color(0xFF4A8CFF), Modifier.weight(1f)) { nav.navigate("video") }
-                EntryCard(Icons.Rounded.LibraryMusic, s.audio, Color(0xFFFF9F40), Modifier.weight(1f)) { nav.navigate("audio") }
+            SectionTitleInfo(s.mirrorPicture) { infoDialog = s.mirrorInAppSub }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth().glass(radius = 16)
+                    .clickable { actions.requestScreenMirrorCast() }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.mirrorInAppTitle, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(s.mirrorInAppSub, color = Aurora.TextDim, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) { Text(CastEngine.selected.value?.let { CastEngine.typeLabel(it) } ?: s.castDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+                Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
             }
+
+            Spacer(Modifier.height(16.dp))
+            SectionTitleInfo(s.sound) { infoDialog = s.soundInfo }
+            Spacer(Modifier.height(8.dp))
+            // 仅投声音：与「投画面」一致，点卡片直接进入投声音逻辑（系统音频→所选音箱）
+            Row(
+                Modifier.fillMaxWidth().glass(radius = 16)
+                    .clickable { actions.requestSystemAudioCast() }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.soundOnly, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(s.soundOnlyDesc, color = Aurora.TextDim, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.background(Aurora.Cyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) { Text(CastEngine.selected.value?.let { CastEngine.typeLabel(it) } ?: s.castDevice, color = Aurora.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+                Icon(Icons.Rounded.ChevronRight, null, tint = Aurora.Cyan, modifier = Modifier.size(20.dp))
+            }
+
+            Spacer(Modifier.height(24.dp))
+            CastZone()
+            Spacer(Modifier.height(12.dp))
         }
 
         // 设备选择浮层（背景磨砂 + 半透遮罩）
@@ -275,6 +272,14 @@ fun MainScreen(nav: NavHostController) {
                 DevicePanel { showDevices = false }
             }
         }
+    }
+    infoDialog?.let { d ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { infoDialog = null },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { infoDialog = null }) { Text(s.confirm) } },
+            title = { Text(d, color = Aurora.TextPrimary) },
+            containerColor = Aurora.Surface,
+        )
     }
 }
 
@@ -763,16 +768,26 @@ fun SettingsScreen(nav: NavHostController, actions: CastActions) {
             ) { idx -> L10n.set(ctx, if (idx == 1) Lang.EN else Lang.ZH) }
         }
         Spacer(Modifier.height(12.dp))
-        SettingRow(Icons.Rounded.Cast, s.protocolsTitle, s.protocolsSub) { nav.navigate("protocols") }
-        SettingRow(Icons.Rounded.Shield, s.legalTitle, s.legalSub) { nav.navigate("legal") }
-        SettingRow(Icons.Rounded.Speaker, s.howTitle, s.howSub)
-        // 调试区：版本号连点 10 下解锁（普通用户不需要兼容开关，避免误触）
-        if (CastEngine.debugUnlocked.value) {
-            ForceAlacRow()
-            SonosWavRow()
-            SettingRow(Icons.Rounded.BugReport, s.debugTitle, s.debugSub, onClick = actions.openDebug)
+        // 初始音量
+        Column(Modifier.fillMaxWidth().glass(radius = 16).padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(38.dp).background(Aurora.brandBrush, RoundedCornerShape(11.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.GraphicEq, null, tint = Color(0xFF00131A), modifier = Modifier.size(20.dp)) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(s.initialVolume, color = Aurora.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${CastEngine.initialVolume()}%", color = Aurora.TextDim, fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.Slider(
+                value = CastEngine.initialVolume().toFloat(),
+                onValueChange = { CastEngine.setInitialVolume(it.toInt(), ctx) },
+                valueRange = 0f..100f,
+            )
         }
-        UpdateRow()
         Spacer(Modifier.height(16.dp))
         VersionTapRow()
         Spacer(Modifier.height(4.dp))
@@ -980,8 +995,8 @@ fun ProtocolsScreen(nav: NavHostController) {
     }
 }
 
-private const val TERMS_URL = "https://github.com/chunguangwei/AirSonic/blob/main/TERMS.md"
-private const val PRIVACY_URL = "https://github.com/chunguangwei/AirSonic/blob/main/PRIVACY.md"
+private const val TERMS_URL = "https://github.com/RuotongX/AirSonic/blob/main/TERMS.md"
+private const val PRIVACY_URL = "https://github.com/RuotongX/AirSonic/blob/main/PRIVACY.md"
 private const val CONTACT_EMAIL = "chunguangwee@gmail.com"
 
 /** 用户协议 + 隐私政策：应用内可离线阅读的摘要 + 跳 GitHub 看完整条款。 */

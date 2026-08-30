@@ -16,7 +16,8 @@ data class Strings(
     val skip: String,              // 跳过 / Skip  (后接 "5s")
     val selectDevice: String,
     val settings: String,
-    val localMedia: String,
+        val initialVolume: String,     // 初始音量 / Initial volume
+        val localMedia: String,
     val video: String,
     val audio: String,
     val mirrorTitle: String,       // 手机镜像 / Phone Mirror
@@ -129,7 +130,7 @@ data class Strings(
 
 private val ZH = Strings(
     tagline = "把声音，投向空间",
-    skip = "跳过", selectDevice = "选择设备", settings = "设置",
+    skip = "跳过", selectDevice = "选择设备", settings = "设置", initialVolume = "初始音量",
     localMedia = "投射本地媒体", video = "视频", audio = "音频",
     mirrorTitle = "手机镜像", mirrorSub = "画面应用内投屏到电视 · 声音支持 AirPlay/DLNA",
     mirrorPicture = "投画面",
@@ -146,8 +147,7 @@ private val ZH = Strings(
     debugTitle = "调试 · 验证点", debugSub = "开发者调试入口",
     version = "AirSonic · 版本",
     licenseLine = "© 2026 Chunguang Wei · PolyForm Noncommercial 1.0.0\n仅限非商业使用，商业使用需作者书面授权\n联系 / Bug 反馈：chunguangwee@gmail.com",
-    language = "语言",
-    back = "返回", device = "设备",
+    language = "语言", back = "返回", device = "设备",
     castingTo = "正在投送 ·", stop = "停止投送",
     connecting = "正在连接", stopped = "已停止", playFinished = "播放完成",
     castError = "投送异常：", pairFail = "配对失败", setupFail = "SETUP 失败",
@@ -204,7 +204,7 @@ private val ZH = Strings(
 private val EN = Strings(
     tagline = "Cast your sound into the room",
     skip = "Skip", selectDevice = "Select device", settings = "Settings",
-    localMedia = "Local media", video = "Video", audio = "Audio",
+        initialVolume = "Initial volume", localMedia = "Local media", video = "Video", audio = "Audio",
     mirrorTitle = "Phone Mirror", mirrorSub = "In-app screen cast · Sound via AirPlay/DLNA",
     mirrorPicture = "Mirror screen",
     resolution = "Resolution", frameRate = "Frame rate", comingSoon = "Coming soon",

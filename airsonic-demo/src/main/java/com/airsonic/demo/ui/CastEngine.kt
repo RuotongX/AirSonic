@@ -94,12 +94,24 @@ object CastEngine {
     }
 
     private const val PREFS = "airsonic_prefs"
+            private const val KEY_INITIAL_VOLUME = "initial_volume"
+            private val initialVolumeState = mutableStateOf(35)
 
-    fun loadPrefs(context: Context) {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        forceAlac.value = p.getBoolean("force_alac", false)
-        sonosWav.value = p.getBoolean("sonos_wav", true)
-        debugUnlocked.value = p.getBoolean("debug_unlocked", false)
+            /** 初始音量（设置里可调，默认 35）——投送建立时无条件应用。 */
+            fun initialVolume(): Int = initialVolumeState.value
+
+            fun setInitialVolume(v: Int, context: Context) {
+                initialVolumeState.value = v.coerceIn(0, 100)
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putInt(KEY_INITIAL_VOLUME, initialVolumeState.value).apply()
+            }
+
+        fun loadPrefs(context: Context) {
+                val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                forceAlac.value = p.getBoolean("force_alac", false)
+                sonosWav.value = p.getBoolean("sonos_wav", true)
+                debugUnlocked.value = p.getBoolean("debug_unlocked", false)
+                initialVolumeState.value = p.getInt(KEY_INITIAL_VOLUME, 35)
         // 强杀/崩溃后冷启动：上次 DLNA 会话的 Stop 没发出去（电视可能还在播）→ 补发 Stop 清场
         val stale = p.getString("last_dlna_ctl", null)
         if (stale != null) {
@@ -142,7 +154,7 @@ object CastEngine {
     @Volatile private var dlnaCtl: DlnaController? = null
     @Volatile private var volumeController: VolumeController? = null
     /** 投送中音量百分比 0..100，UI 滑块绑定。 */
-    val volumePct = mutableStateOf(50)
+    val volumePct = mutableStateOf(35)
     /** 音量下发被设备拒绝/无响应（海信 VIDAA 等）→ UI 在滑块下提示用遥控器。 */
     val volumeWarn = mutableStateOf(false)
     /** HTTP 流输出模式的直播地址（非 null 时 CastZone 显示可复制地址）。 */
@@ -356,10 +368,19 @@ object CastEngine {
                     ?: run { fail(L10n.s.setupFail, gen); return@launch }
                 val (session, result) = pair
                 if (!isActive || !casting || gen != sessionGen) return@launch   // connect(PIN)期间可能已被接管
-                bindVolume(AirplayVolumeController(session), defaultPct = 50)
-                mutePhone(app)
-                onCastingStarted(device.name)
-                activeCodec.value = "${activeCodec.value}｜t=${device.type}｜h=${device.host}｜1400=$probeReason"
+                bindVolume(AirplayVolumeController(session), defaultPct = initialVolume())
+                                mutePhone(app)
+                                onCastingStarted(device.name)
+                                // HomePod 等 AirPlay2 设备在 RECORD（流开始）前忽略 SET_PARAMETER volume：
+                                // 等流真正跑起来后再重发一次音量，保证初始音量真实生效。
+                                engineScope.launch {
+                                    delay(1200)
+                                    if (isActive && casting && gen == sessionGen) {
+                                        volumeController?.setVolume(volumePct.value)
+                                        android.util.Log.i("CastEngine", "re-applied volume ${volumePct.value} after stream start")
+                                    }
+                                }
+                                activeCodec.value = "${activeCodec.value}｜t=${device.type}｜h=${device.host}｜1400=$probeReason"
                 withContext(Dispatchers.IO) {
                     session.streamCapturedPcm(
                         result = result, channels = 2,
@@ -630,7 +651,7 @@ object CastEngine {
             if (!casting || gen != sessionGen) return
             val rcUrl = device.renderingControlUrl
             if (rcUrl != null) {
-                bindVolume(UpnpVolumeController(RenderingControlController(rcUrl)), defaultPct = 50)
+                bindVolume(UpnpVolumeController(RenderingControlController(rcUrl)), defaultPct = initialVolume())
             } else {
                 bindVolume(gainCtl!!, defaultPct = 100)
             }
@@ -848,7 +869,7 @@ object CastEngine {
                 val dc = DlnaController(device.controlUrl!!); ctl = dc; dlnaCtl = dc   // 入口已判非空
                 persistDlnaSession(app, device.controlUrl!!)
                 device.renderingControlUrl?.let {
-                    bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = 50)
+                    bindVolume(UpnpVolumeController(RenderingControlController(it)), defaultPct = initialVolume())
                 }
                 activeCodec.value = "$fmtLabel ${w}x${h}｜…｜$localIp:$port"
                 delay(500)   // 让编码流先产数据，渲染器一连即有内容（Sonos 同款时序经验）
@@ -1020,14 +1041,16 @@ object CastEngine {
 
     /** 绑定音量后端并按 getVolume 初始化滑块（读不到走默认）。在投送会话建立后调用。 */
     private fun bindVolume(controller: VolumeController, defaultPct: Int) {
-        volumeController = controller
-        volumeWarn.value = false
-        val cur = controller.getVolume()
-        val pct = (cur ?: defaultPct).coerceIn(0, 100)
-        volumePct.value = pct
-        muted.value = false
-        volumeActive.value = true
-    }
+            volumeController = controller
+            volumeWarn.value = false
+            // 用户设定的初始音量必须真实生效：无条件应用到设备（AirPlay 读不到设备音量时会
+            // 静默沿用上次音量，导致“显示 35 实际 50”）。
+            val pct = defaultPct.coerceIn(0, 100)
+            volumePct.value = pct
+            muted.value = false
+            volumeActive.value = true
+            runCatching { controller.setVolume(pct) }
+        }
 
     private fun unbindVolume() {
         volumeThrottleJob?.cancel(); volumeThrottleJob = null

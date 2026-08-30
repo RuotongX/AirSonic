@@ -2,6 +2,8 @@
 
 **生效日期：2026-06-10　·　适用：AirSonic（Android）**
 
+> **本版本说明**：本应用为 **RuotongX 魔改版**（fork 自 [chunguangwei/AirSonic](https://github.com/chunguangwei/AirSonic)，魔改者：Ruotong Xu）。上游版权归 Chunguang Wei 所有，魔改部分版权归 Ruotong Xu 所有；本 fork 与上游同样适用 **PolyForm Noncommercial License 1.0.0**，仅限非商业用途。魔改内容包括：精简开屏与主题、去品牌化文案、新增「初始音量」设置及音量修复（详见仓库 README 的「魔改清单」）。
+
 > English summary follows the Chinese text below.
 
 欢迎使用 AirSonic。安装、运行或使用本应用，即表示你已阅读、理解并同意本协议。若不同意，请勿使用。
